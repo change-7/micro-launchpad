@@ -1,0 +1,4 @@
+.build/
+/.omo/
+/마이크로 런치패드.app/
+.DS_Store
