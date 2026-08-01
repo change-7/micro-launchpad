@@ -251,19 +251,55 @@ enum CodexMotionDisplayScope: String, CaseIterable, Codable, Identifiable {
     }
 }
 
+enum LaunchpadLEDBubbleSize: String, CaseIterable, Codable, Identifiable {
+    case small
+    case regular
+    case large
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .small: "작게"
+        case .regular: "보통"
+        case .large: "크게"
+        }
+    }
+
+    var points: Double {
+        switch self {
+        case .small: 124
+        case .regular: 156
+        case .large: 196
+        }
+    }
+}
+
 struct CodexMotionDisplaySettings: Codable, Hashable {
     var scope: CodexMotionDisplayScope = .allPages
     var pageID: UUID?
     var preservesPadLEDsDuringMotion = false
+    var showsLaunchpadLEDBubble = true
+    var launchpadLEDBubbleSize: LaunchpadLEDBubbleSize = .regular
+    var launchpadLEDBubbleOriginX: Double?
+    var launchpadLEDBubbleOriginY: Double?
 
     init(
         scope: CodexMotionDisplayScope = .allPages,
         pageID: UUID? = nil,
-        preservesPadLEDsDuringMotion: Bool = false
+        preservesPadLEDsDuringMotion: Bool = false,
+        showsLaunchpadLEDBubble: Bool = true,
+        launchpadLEDBubbleSize: LaunchpadLEDBubbleSize = .regular,
+        launchpadLEDBubbleOriginX: Double? = nil,
+        launchpadLEDBubbleOriginY: Double? = nil
     ) {
         self.scope = scope
         self.pageID = pageID
         self.preservesPadLEDsDuringMotion = preservesPadLEDsDuringMotion
+        self.showsLaunchpadLEDBubble = showsLaunchpadLEDBubble
+        self.launchpadLEDBubbleSize = launchpadLEDBubbleSize
+        self.launchpadLEDBubbleOriginX = launchpadLEDBubbleOriginX
+        self.launchpadLEDBubbleOriginY = launchpadLEDBubbleOriginY
     }
 
     func allowsPresentation(on pageID: UUID) -> Bool {
@@ -303,6 +339,10 @@ struct CodexMotionDisplaySettings: Codable, Hashable {
         case scope
         case pageID
         case preservesPadLEDsDuringMotion
+        case showsLaunchpadLEDBubble
+        case launchpadLEDBubbleSize
+        case launchpadLEDBubbleOriginX
+        case launchpadLEDBubbleOriginY
     }
 
     private struct PersistedPreference: Decodable {
@@ -314,6 +354,10 @@ struct CodexMotionDisplaySettings: Codable, Hashable {
         scope = try container.decodeIfPresent(CodexMotionDisplayScope.self, forKey: .scope) ?? .allPages
         pageID = try container.decodeIfPresent(UUID.self, forKey: .pageID)
         preservesPadLEDsDuringMotion = try container.decodeIfPresent(Bool.self, forKey: .preservesPadLEDsDuringMotion) ?? false
+        showsLaunchpadLEDBubble = try container.decodeIfPresent(Bool.self, forKey: .showsLaunchpadLEDBubble) ?? true
+        launchpadLEDBubbleSize = try container.decodeIfPresent(LaunchpadLEDBubbleSize.self, forKey: .launchpadLEDBubbleSize) ?? .regular
+        launchpadLEDBubbleOriginX = try container.decodeIfPresent(Double.self, forKey: .launchpadLEDBubbleOriginX)
+        launchpadLEDBubbleOriginY = try container.decodeIfPresent(Double.self, forKey: .launchpadLEDBubbleOriginY)
     }
 }
 

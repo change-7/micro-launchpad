@@ -88,6 +88,7 @@ struct CodexConnectionView: View {
             }
 
             motionDisplayLocation
+            launchpadLEDBubbleSetting
 
             ScrollView {
                 VStack(spacing: 0) {
@@ -154,6 +155,28 @@ struct CodexConnectionView: View {
         )
     }
 
+    private var launchpadLEDBubbleSetting: some View {
+        HStack(spacing: 10) {
+            Toggle("Launchpad LED 말풍선 표시", isOn: launchpadLEDBubbleBinding)
+                .font(.system(size: 11))
+                .toggleStyle(.switch)
+                .accessibilityIdentifier("launchpad-led-bubble-toggle")
+            Picker("Launchpad LED 말풍선 크기", selection: launchpadLEDBubbleSizeBinding) {
+                ForEach(LaunchpadLEDBubbleSize.allCases) { size in
+                    Text(size.title).tag(size)
+                }
+            }
+            .labelsHidden()
+            .frame(width: 92)
+            .accessibilityIdentifier("launchpad-led-bubble-size-picker")
+            Text("기기에 전송한 현재 LED 배열을 그대로 표시 · 드래그로 이동")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 4)
+    }
+
     private var motionDisplayPageBinding: Binding<UUID> {
         Binding(
             get: { store.codexMotionDisplaySettings.pageID ?? store.pages[0].id },
@@ -165,6 +188,20 @@ struct CodexConnectionView: View {
         Binding(
             get: { store.codexMotionDisplaySettings.preservesPadLEDsDuringMotion },
             set: { store.setCodexMotionPreservesPadLEDsDuringMotion($0) }
+        )
+    }
+
+    private var launchpadLEDBubbleBinding: Binding<Bool> {
+        Binding(
+            get: { store.codexMotionDisplaySettings.showsLaunchpadLEDBubble },
+            set: { store.setLaunchpadLEDBubbleVisible($0) }
+        )
+    }
+
+    private var launchpadLEDBubbleSizeBinding: Binding<LaunchpadLEDBubbleSize> {
+        Binding(
+            get: { store.codexMotionDisplaySettings.launchpadLEDBubbleSize },
+            set: { store.setLaunchpadLEDBubbleSize($0) }
         )
     }
 

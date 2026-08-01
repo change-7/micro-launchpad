@@ -183,6 +183,22 @@ final class LaunchpadStore {
         saveCodexMotionDisplaySettings()
     }
 
+    func setLaunchpadLEDBubbleVisible(_ isVisible: Bool) {
+        codexMotionDisplaySettings.showsLaunchpadLEDBubble = isVisible
+        saveCodexMotionDisplaySettings()
+    }
+
+    func setLaunchpadLEDBubbleSize(_ size: LaunchpadLEDBubbleSize) {
+        codexMotionDisplaySettings.launchpadLEDBubbleSize = size
+        saveCodexMotionDisplaySettings()
+    }
+
+    func setLaunchpadLEDBubbleOrigin(_ origin: CGPoint) {
+        codexMotionDisplaySettings.launchpadLEDBubbleOriginX = origin.x
+        codexMotionDisplaySettings.launchpadLEDBubbleOriginY = origin.y
+        saveCodexMotionDisplaySettings()
+    }
+
     func shouldPreservePadLEDsDuringCodexMotion(for activity: CodexActivity) -> Bool {
         codexMotionDisplaySettings.shouldPreservePadLEDsDuringMotion(for: activity)
     }

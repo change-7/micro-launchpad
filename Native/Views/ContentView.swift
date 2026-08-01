@@ -28,6 +28,7 @@ struct ContentView: View {
     let midi: LaunchpadMIDIManager
     let codex: CodexAppServerClient
     let codexActivity: CodexActivityController
+    let launchpadLEDBubble: LaunchpadLEDStatusBubble
     @State private var editedPad = Pad(id: "grid_0_0")
     @State private var showingPermissionAlert = false
     @State private var showingMotionPresets = false
@@ -71,6 +72,7 @@ struct ContentView: View {
             midi.onPadPressed = handleHardwarePadPress
             synchronizeSelection()
             midi.updateLEDs(for: store.pages, activePage: store.selectedPage)
+            launchpadLEDBubble.update(midi: midi, store: store)
         }
         .onChange(of: editedPad) { _, pad in store.update(pad) }
         .onChange(of: store.selectedPage) { _, _ in
@@ -85,6 +87,7 @@ struct ContentView: View {
             if !store.shouldPresentCodexMotion(on: store.currentPage) {
                 endCodexMotion()
             }
+            launchpadLEDBubble.update(midi: midi, store: store)
         }
         .onChange(of: codex.activity, initial: true) { _, activity in
             codexActivity.updateAppServerActivity(activity)

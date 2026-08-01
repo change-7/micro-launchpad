@@ -8,11 +8,38 @@ struct LaunchpadMIDIMessage: Equatable, Sendable {
     let value: UInt8
 }
 
+struct LaunchpadLEDState: Equatable, Sendable {
+    var top = Array(repeating: UInt8(12), count: 8)
+    var grid = Array(repeating: UInt8(12), count: 64)
+    var side = Array(repeating: UInt8(12), count: 8)
+
+    mutating func apply(_ messages: [LaunchpadMIDIMessage]) {
+        for message in messages {
+            switch message.status & 0xF0 {
+            case 0xB0 where (104...111).contains(message.number):
+                top[Int(message.number - 104)] = message.value
+            case 0x90:
+                let row = Int(message.number / 16)
+                let column = Int(message.number % 16)
+                guard (0..<8).contains(row) else { continue }
+                if (0..<8).contains(column) {
+                    grid[row * 8 + column] = message.value
+                } else if column == 8 {
+                    side[row] = message.value
+                }
+            default:
+                continue
+            }
+        }
+    }
+}
+
 @Observable
 final class LaunchpadMIDIManager: @unchecked Sendable {
     // CoreMIDI invokes its packet callback off the main thread. That callback only parses
     // immutable bytes and schedules UI/action work back on the main queue.
     private(set) var isConnected = false
+    private(set) var ledState = LaunchpadLEDState()
 
     var onPadPressed: ((String) -> Void)?
     var onPagePressed: ((Int) -> Void)?
@@ -199,6 +226,7 @@ final class LaunchpadMIDIManager: @unchecked Sendable {
     private var canSend: Bool { messageSink != nil || isConnected }
 
     private func send(_ messages: [LaunchpadMIDIMessage]) {
+        ledState.apply(messages)
         if let messageSink {
             messageSink(messages)
             return

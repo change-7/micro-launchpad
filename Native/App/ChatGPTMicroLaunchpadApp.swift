@@ -16,7 +16,8 @@ struct ChatGPTMicroLaunchpadApp: App {
                 runner: runner,
                 midi: midi,
                 codex: appDelegate.codex,
-                codexActivity: appDelegate.codexActivityController
+                codexActivity: appDelegate.codexActivityController,
+                launchpadLEDBubble: appDelegate.launchpadLEDBubble
             )
                 .preferredColorScheme(.dark)
                 .frame(width: 1120, height: 860)
@@ -102,6 +103,7 @@ final class CodexActivityController {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let codex: CodexAppServerClient
     let codexActivityController: CodexActivityController
+    let launchpadLEDBubble = LaunchpadLEDStatusBubble()
     private let connectionStarter: any CodexAppServerConnectionStarting
     private weak var mainWindow: NSWindow?
     private var statusItem: NSStatusItem?
@@ -161,6 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        launchpadLEDBubble.close()
         codexActivityController.stopDesktopMonitoring()
     }
 
@@ -215,6 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.items.forEach { $0.target = self }
         item.menu = menu
         statusItem = item
+        launchpadLEDBubble.attach(to: item.button)
     }
 
     @objc private func openMainWindowFromMenu() {

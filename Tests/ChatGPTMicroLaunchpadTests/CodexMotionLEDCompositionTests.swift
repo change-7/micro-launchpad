@@ -2,6 +2,55 @@ import XCTest
 @testable import ChatGPTMicroLaunchpad
 
 final class CodexMotionLEDCompositionTests: XCTestCase {
+    @MainActor
+    func testLEDState_whenLaunchpadOutputChanges_keepsTheExactVisibleButtonValues() {
+        // Given
+        let midi = LaunchpadMIDIManager(startsMIDIClient: false, messageSink: { _ in })
+        let pages = eightPages(first: page(gridColors: ["green"]))
+
+        // When
+        midi.updateLEDs(for: pages, activePage: 0)
+
+        // Then
+        XCTAssertEqual(midi.ledState.grid[0], 44)
+        XCTAssertEqual(midi.ledState.side[0], 12)
+        XCTAssertEqual(midi.ledState.top[0], 60)
+    }
+
+    func testDisplaySettings_whenLEDBubbleIsEnabled_roundTripsItsVisibilityAndPosition() throws {
+        // Given
+        let settings = CodexMotionDisplaySettings(
+            showsLaunchpadLEDBubble: true,
+            launchpadLEDBubbleOriginX: 320,
+            launchpadLEDBubbleOriginY: 540
+        )
+
+        // When
+        let restored = try JSONDecoder().decode(
+            CodexMotionDisplaySettings.self,
+            from: JSONEncoder().encode(settings)
+        )
+
+        // Then
+        XCTAssertTrue(restored.showsLaunchpadLEDBubble)
+        XCTAssertEqual(restored.launchpadLEDBubbleOriginX, 320)
+        XCTAssertEqual(restored.launchpadLEDBubbleOriginY, 540)
+    }
+
+    func testDisplaySettings_whenLEDBubbleSizeIsChosen_roundTripsTheSize() throws {
+        // Given
+        let settings = CodexMotionDisplaySettings(launchpadLEDBubbleSize: .large)
+
+        // When
+        let restored = try JSONDecoder().decode(
+            CodexMotionDisplaySettings.self,
+            from: JSONEncoder().encode(settings)
+        )
+
+        // Then
+        XCTAssertEqual(restored.launchpadLEDBubbleSize, .large)
+    }
+
     func testDisplaySettings_whenDecodingLegacyJSON_defaultsGlobalPadLEDPreservationToFalse() throws {
         // Given
         let data = Data("""
