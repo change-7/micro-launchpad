@@ -94,6 +94,7 @@ struct ContentView: View {
             midi.updateLEDs(for: store.pages, activePage: store.selectedPage)
             virtualMotion.updateUnderlyingPage(store.currentPage)
             synchronizeWeeklyUsageDisplay()
+            resumeCodexMotionForCurrentPageIfNeeded()
         }
         .onChange(of: store.pages) { _, _ in
             midi.updateLEDs(for: store.pages, activePage: store.selectedPage)
@@ -229,6 +230,13 @@ struct ContentView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 
+    private func resumeCodexMotionForCurrentPageIfNeeded() {
+        guard !isCodexMotionPlaying,
+              CodexMotionReentryPolicy.shouldRestart(for: codexActivity.activity),
+              store.shouldPresentCodexMotion(on: store.currentPage) else { return }
+        startCodexMotion(for: codexActivity.activity)
+    }
+
     private func dismissCodexMotionIfNeeded(for padID: String) {
         let presentation = codexMotionActivity.dismissalPresentation(using: store.codexMotionPresentation)
         if presentation.shouldDismiss(for: padID) {
@@ -257,11 +265,16 @@ struct ContentView: View {
               let weeklyUsage = codex.weeklyUsage else { return nil }
         let remainingCellCount = CodexWeeklyUsageGrid.remainingCellCount(usedPercent: weeklyUsage.usedPercent)
         let activeColor = CodexWeeklyUsageGrid.color(forUsedPercent: weeklyUsage.usedPercent).rawValue
-        return (0..<64).map {
-            CodexWeeklyUsageGrid.isRemainingCellActive(index: $0, remainingCellCount: remainingCellCount)
-                ? activeColor
-                : PadColor.off.rawValue
+        let activePixels: [Bool]
+        switch settings.style {
+        case .level:
+            activePixels = (0..<64).map {
+                CodexWeeklyUsageGrid.isRemainingCellActive(index: $0, remainingCellCount: remainingCellCount)
+            }
+        case .number:
+            activePixels = CodexWeeklyUsageGrid.numericPixels(remainingPercent: 100 - weeklyUsage.usedPercent)
         }
+        return activePixels.map { $0 ? activeColor : PadColor.off.rawValue }
     }
 
     private func synchronizeWeeklyUsageDisplay() {

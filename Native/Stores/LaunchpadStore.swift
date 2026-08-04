@@ -63,6 +63,7 @@ final class LaunchpadStore {
             legacyPresentations: loadedPresentations
         )
         codexMotionDisplaySettings = restoredDisplaySettings.settings
+        let didSeparateCodexDisplayPages = enforceSeparateCodexDisplayPages()
         if needsSideButtonMigration
             || needsSideButtonCategoryOrdering
             || needsSortedSideButtonDefaults
@@ -78,7 +79,7 @@ final class LaunchpadStore {
             }
             save()
         }
-        if restoredDisplaySettings.didMigrateLegacyPreservation {
+        if restoredDisplaySettings.didMigrateLegacyPreservation || didSeparateCodexDisplayPages {
             saveCodexMotionDisplaySettings()
         }
     }
@@ -186,16 +187,16 @@ final class LaunchpadStore {
         saveCodexMotionPresentations()
     }
 
-    func setCodexMotionDisplayScope(_ scope: CodexMotionDisplayScope) {
-        codexMotionDisplaySettings.scope = scope
-        if scope == .specificPage, codexMotionDisplaySettings.pageID == nil {
-            codexMotionDisplaySettings.pageID = pages.first?.id
-        }
+    func setCodexMotionDisplayScope(_: CodexMotionDisplayScope) {
+        codexMotionDisplaySettings.scope = .specificPage
+        enforceSeparateCodexDisplayPages()
         saveCodexMotionDisplaySettings()
     }
 
     func setCodexMotionDisplayPageID(_ pageID: UUID) {
         codexMotionDisplaySettings.pageID = pageID
+        codexMotionDisplaySettings.scope = .specificPage
+        enforceSeparateCodexDisplayPages()
         saveCodexMotionDisplaySettings()
     }
 
@@ -256,16 +257,21 @@ final class LaunchpadStore {
         saveCodexMotionDisplaySettings()
     }
 
-    func setWeeklyUsageDisplayScope(_ scope: CodexMotionDisplayScope) {
-        codexMotionDisplaySettings.weeklyUsageDisplay.scope = scope
-        if scope == .specificPage, codexMotionDisplaySettings.weeklyUsageDisplay.pageID == nil {
-            codexMotionDisplaySettings.weeklyUsageDisplay.pageID = pages.first?.id
-        }
+    func setWeeklyUsageDisplayScope(_: CodexMotionDisplayScope) {
+        codexMotionDisplaySettings.weeklyUsageDisplay.scope = .specificPage
+        enforceSeparateCodexDisplayPages()
         saveCodexMotionDisplaySettings()
     }
 
     func setWeeklyUsageDisplayPageID(_ pageID: UUID) {
         codexMotionDisplaySettings.weeklyUsageDisplay.pageID = pageID
+        codexMotionDisplaySettings.weeklyUsageDisplay.scope = .specificPage
+        enforceSeparateCodexDisplayPages()
+        saveCodexMotionDisplaySettings()
+    }
+
+    func setWeeklyUsageDisplayStyle(_ style: CodexWeeklyUsageDisplayStyle) {
+        codexMotionDisplaySettings.weeklyUsageDisplay.style = style
         saveCodexMotionDisplaySettings()
     }
 
@@ -280,6 +286,21 @@ final class LaunchpadStore {
 
     func shouldPresentCodexMotion(on page: LaunchPage) -> Bool {
         codexMotionDisplaySettings.allowsPresentation(on: page.id)
+    }
+
+    @discardableResult
+    private func enforceSeparateCodexDisplayPages() -> Bool {
+        let previousSettings = codexMotionDisplaySettings
+        let assignment = CodexDisplayPageAssignment.separate(
+            motionPageID: codexMotionDisplaySettings.pageID,
+            weeklyUsagePageID: codexMotionDisplaySettings.weeklyUsageDisplay.pageID,
+            availablePageIDs: pages.map(\.id)
+        )
+        codexMotionDisplaySettings.scope = .specificPage
+        codexMotionDisplaySettings.pageID = assignment.motionPageID
+        codexMotionDisplaySettings.weeklyUsageDisplay.scope = .specificPage
+        codexMotionDisplaySettings.weeklyUsageDisplay.pageID = assignment.weeklyUsagePageID
+        return codexMotionDisplaySettings != previousSettings
     }
 
     private func saveCodexMotionBindings() {

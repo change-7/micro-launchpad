@@ -35,6 +35,15 @@ enum CodexEventReducer {
     }
 }
 
+enum CodexMotionReentryPolicy {
+    static func shouldRestart(for activity: CodexActivity) -> Bool {
+        switch activity {
+        case .connecting, .running, .waitingForApproval: true
+        case .idle, .completed, .failed: false
+        }
+    }
+}
+
 struct DesktopCodexTaskID: Hashable, Sendable {
     let transcriptID: String
     let turnID: String
@@ -257,6 +266,19 @@ struct CodexWeeklyUsage: Equatable, Sendable {
 }
 
 enum CodexWeeklyUsageGrid {
+    private static let digitPixels: [Character: [String]] = [
+        "0": ["111", "101", "101", "101", "111"],
+        "1": ["010", "110", "010", "010", "111"],
+        "2": ["111", "001", "111", "100", "111"],
+        "3": ["111", "001", "111", "001", "111"],
+        "4": ["101", "101", "111", "001", "001"],
+        "5": ["111", "100", "111", "001", "111"],
+        "6": ["111", "100", "111", "101", "111"],
+        "7": ["111", "001", "010", "010", "010"],
+        "8": ["111", "101", "111", "101", "111"],
+        "9": ["111", "101", "111", "001", "111"]
+    ]
+
     static func remainingCellCount(usedPercent: Int) -> Int {
         let clampedUsedPercent = min(max(usedPercent, 0), 100)
         return Int((Double(100 - clampedUsedPercent) * 64 / 100).rounded(.up))
@@ -265,6 +287,22 @@ enum CodexWeeklyUsageGrid {
     static func isRemainingCellActive(index: Int, remainingCellCount: Int) -> Bool {
         guard (0..<64).contains(index) else { return false }
         return index >= 64 - min(max(remainingCellCount, 0), 64)
+    }
+
+    static func numericPixels(remainingPercent: Int) -> [Bool] {
+        let normalizedPercent = min(max(remainingPercent, 0), 100)
+        let text = normalizedPercent == 100 ? "00" : String(format: "%02d", normalizedPercent)
+        var pixels = Array(repeating: false, count: 64)
+        for (digitIndex, digit) in text.enumerated() {
+            guard let rows = digitPixels[digit] else { continue }
+            let startColumn = digitIndex * 4
+            for (row, pattern) in rows.enumerated() {
+                for (column, character) in pattern.enumerated() where character == "1" {
+                    pixels[(row + 1) * 8 + startColumn + column] = true
+                }
+            }
+        }
+        return pixels
     }
 
     static func color(forUsedPercent usedPercent: Int) -> PadColor {
@@ -277,16 +315,73 @@ enum CodexWeeklyUsageGrid {
     }
 }
 
+enum CodexWeeklyUsageDisplayStyle: String, CaseIterable, Codable, Identifiable {
+    case level
+    case number
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .level: "상태 표시"
+        case .number: "숫자 표시"
+        }
+    }
+}
+
+enum CodexDisplayPageAssignment {
+    static func separate(
+        motionPageID: UUID?,
+        weeklyUsagePageID: UUID?,
+        availablePageIDs: [UUID]
+    ) -> (motionPageID: UUID?, weeklyUsagePageID: UUID?) {
+        guard let firstPageID = availablePageIDs.first else { return (nil, nil) }
+        let motionPageID = motionPageID.flatMap { availablePageIDs.contains($0) ? $0 : nil } ?? firstPageID
+        let otherPageIDs = availablePageIDs.filter { $0 != motionPageID }
+        guard let fallbackWeeklyUsagePageID = otherPageIDs.first else { return (motionPageID, nil) }
+        let weeklyUsagePageID = weeklyUsagePageID.flatMap { otherPageIDs.contains($0) ? $0 : nil } ?? fallbackWeeklyUsagePageID
+        return (motionPageID, weeklyUsagePageID)
+    }
+}
+
 struct CodexWeeklyUsageDisplaySettings: Codable, Hashable {
-    var isEnabled = false
-    var scope: CodexMotionDisplayScope = .allPages
+    var isEnabled: Bool
+    var scope: CodexMotionDisplayScope
     var pageID: UUID?
+    var style: CodexWeeklyUsageDisplayStyle
+
+    init(
+        isEnabled: Bool = false,
+        scope: CodexMotionDisplayScope = .allPages,
+        pageID: UUID? = nil,
+        style: CodexWeeklyUsageDisplayStyle = .level
+    ) {
+        self.isEnabled = isEnabled
+        self.scope = scope
+        self.pageID = pageID
+        self.style = style
+    }
 
     func allowsPresentation(on pageID: UUID) -> Bool {
         switch scope {
         case .allPages: true
         case .specificPage: self.pageID == pageID
         }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case isEnabled
+        case scope
+        case pageID
+        case style
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? false
+        scope = try container.decodeIfPresent(CodexMotionDisplayScope.self, forKey: .scope) ?? .allPages
+        pageID = try container.decodeIfPresent(UUID.self, forKey: .pageID)
+        style = try container.decodeIfPresent(CodexWeeklyUsageDisplayStyle.self, forKey: .style) ?? .level
     }
 }
 

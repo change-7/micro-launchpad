@@ -114,31 +114,21 @@ struct CodexConnectionView: View {
     private var motionDisplayLocation: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 10) {
-                Text("표시 위치")
+                Text("상태 모션 페이지")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
 
-                Picker("Codex 상태 모션 표시 위치", selection: motionDisplayScopeBinding) {
-                    ForEach(CodexMotionDisplayScope.allCases) { scope in
-                        Text(scope.title).tag(scope)
+                Picker("Codex 상태 모션 표시 페이지", selection: motionDisplayPageBinding) {
+                    ForEach(Array(store.pages.enumerated()), id: \.element.id) { index, page in
+                        Text("P\(index + 1) · \(page.name)").tag(page.id)
                     }
                 }
                 .labelsHidden()
-                .frame(width: 120)
+                .frame(width: 170)
 
-                if store.codexMotionDisplaySettings.scope == .specificPage {
-                    Picker("Codex 상태 모션 표시 페이지", selection: motionDisplayPageBinding) {
-                        ForEach(Array(store.pages.enumerated()), id: \.element.id) { index, page in
-                            Text("P\(index + 1) · \(page.name)").tag(page.id)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 170)
-                } else {
-                    Text("현재 페이지와 관계없이 표시")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
+                Text("사용량 표시와 다른 페이지")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
                 Toggle("모션 중 기존 패드 LED 유지", isOn: preservesPadLEDsBinding)
                     .font(.system(size: 11))
                     .lineLimit(1)
@@ -148,13 +138,6 @@ struct CodexConnectionView: View {
             }
         }
         .padding(.vertical, 6)
-    }
-
-    private var motionDisplayScopeBinding: Binding<CodexMotionDisplayScope> {
-        Binding(
-            get: { store.codexMotionDisplaySettings.scope },
-            set: { store.setCodexMotionDisplayScope($0) }
-        )
     }
 
     private var launchpadLEDBubbleSetting: some View {
@@ -237,25 +220,25 @@ struct CodexConnectionView: View {
                 .accessibilityIdentifier("weekly-usage-display-toggle")
 
             HStack(spacing: 10) {
-                Picker("주간 잔여량 표시 위치", selection: weeklyUsageScopeBinding) {
-                    ForEach(CodexMotionDisplayScope.allCases) { scope in
-                        Text(scope.title).tag(scope)
+                Picker("주간 잔여량 표시 방식", selection: weeklyUsageStyleBinding) {
+                    ForEach(CodexWeeklyUsageDisplayStyle.allCases) { style in
+                        Text(style.title).tag(style)
                     }
                 }
                 .labelsHidden()
-                .frame(width: 120)
+                .frame(width: 105)
 
-                if store.codexMotionDisplaySettings.weeklyUsageDisplay.scope == .specificPage {
-                    Picker("주간 잔여량 표시 페이지", selection: weeklyUsagePageBinding) {
-                        ForEach(Array(store.pages.enumerated()), id: \.element.id) { index, page in
-                            Text("P\(index + 1) · \(page.name)").tag(page.id)
-                        }
+                Picker("주간 잔여량 표시 페이지", selection: weeklyUsagePageBinding) {
+                    ForEach(Array(store.pages.enumerated()), id: \.element.id) { index, page in
+                        Text("P\(index + 1) · \(page.name)").tag(page.id)
                     }
-                    .labelsHidden()
-                    .frame(width: 170)
                 }
+                .labelsHidden()
+                .frame(width: 170)
 
-                Text("주간 한도 잔여량을 64칸으로 표시")
+                Text(store.codexMotionDisplaySettings.weeklyUsageDisplay.style == .level
+                    ? "상태 모션과 다른 페이지"
+                    : "100%=00 · 다른 페이지")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
@@ -336,17 +319,17 @@ struct CodexConnectionView: View {
         )
     }
 
-    private var weeklyUsageScopeBinding: Binding<CodexMotionDisplayScope> {
-        Binding(
-            get: { store.codexMotionDisplaySettings.weeklyUsageDisplay.scope },
-            set: { store.setWeeklyUsageDisplayScope($0) }
-        )
-    }
-
     private var weeklyUsagePageBinding: Binding<UUID> {
         Binding(
             get: { store.codexMotionDisplaySettings.weeklyUsageDisplay.pageID ?? store.pages[0].id },
             set: { store.setWeeklyUsageDisplayPageID($0) }
+        )
+    }
+
+    private var weeklyUsageStyleBinding: Binding<CodexWeeklyUsageDisplayStyle> {
+        Binding(
+            get: { store.codexMotionDisplaySettings.weeklyUsageDisplay.style },
+            set: { store.setWeeklyUsageDisplayStyle($0) }
         )
     }
 

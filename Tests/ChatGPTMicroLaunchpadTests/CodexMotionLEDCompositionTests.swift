@@ -2,6 +2,14 @@ import XCTest
 @testable import ChatGPTMicroLaunchpad
 
 final class CodexMotionLEDCompositionTests: XCTestCase {
+    func testMotionReentry_whenWorkIsStillActive_restartsOnlyForLiveActivities() {
+        XCTAssertTrue(CodexMotionReentryPolicy.shouldRestart(for: .running))
+        XCTAssertTrue(CodexMotionReentryPolicy.shouldRestart(for: .connecting))
+        XCTAssertTrue(CodexMotionReentryPolicy.shouldRestart(for: .waitingForApproval))
+        XCTAssertFalse(CodexMotionReentryPolicy.shouldRestart(for: .completed))
+        XCTAssertFalse(CodexMotionReentryPolicy.shouldRestart(for: .idle))
+    }
+
     func testWeeklyUsageGrid_whenWeeklyLimitIsUsed_calculatesRemainingCells() {
         XCTAssertEqual(CodexWeeklyUsageGrid.remainingCellCount(usedPercent: 0), 64)
         XCTAssertEqual(CodexWeeklyUsageGrid.remainingCellCount(usedPercent: 77), 15)
@@ -12,6 +20,15 @@ final class CodexMotionLEDCompositionTests: XCTestCase {
         XCTAssertFalse(CodexWeeklyUsageGrid.isRemainingCellActive(index: 48, remainingCellCount: 15))
         XCTAssertTrue(CodexWeeklyUsageGrid.isRemainingCellActive(index: 49, remainingCellCount: 15))
         XCTAssertTrue(CodexWeeklyUsageGrid.isRemainingCellActive(index: 63, remainingCellCount: 15))
+    }
+
+    func testWeeklyUsageGrid_whenOneHundredPercentRemains_rendersDoubleZeroDigits() {
+        let pixels = CodexWeeklyUsageGrid.numericPixels(remainingPercent: 100)
+
+        XCTAssertTrue(pixels[16])
+        XCTAssertFalse(pixels[17])
+        XCTAssertTrue(pixels[20])
+        XCTAssertFalse(pixels[21])
     }
 
     func testDisplaySettings_whenWeeklyUsageIsLimitedToOnePage_roundTripsThePage() throws {
@@ -32,6 +49,37 @@ final class CodexMotionLEDCompositionTests: XCTestCase {
         XCTAssertTrue(restored.weeklyUsageDisplay.isEnabled)
         XCTAssertTrue(restored.weeklyUsageDisplay.allowsPresentation(on: pageID))
         XCTAssertFalse(restored.weeklyUsageDisplay.allowsPresentation(on: UUID()))
+    }
+
+    func testWeeklyUsageDisplaySettings_whenStoredBeforeNumberMode_defaultsToLevelStyle() throws {
+        // Given
+        let data = """
+        {"isEnabled":true,"scope":"allPages"}
+        """.data(using: .utf8)!
+
+        // When
+        let restored = try JSONDecoder().decode(CodexWeeklyUsageDisplaySettings.self, from: data)
+
+        // Then
+        XCTAssertTrue(restored.isEnabled)
+        XCTAssertEqual(restored.style, .level)
+    }
+
+    func testDisplayPageAssignment_whenPagesMatch_movesWeeklyUsageToAnotherPage() {
+        // Given
+        let motionPageID = UUID()
+        let otherPageID = UUID()
+
+        // When
+        let assignment = CodexDisplayPageAssignment.separate(
+            motionPageID: motionPageID,
+            weeklyUsagePageID: motionPageID,
+            availablePageIDs: [motionPageID, otherPageID]
+        )
+
+        // Then
+        XCTAssertEqual(assignment.motionPageID, motionPageID)
+        XCTAssertEqual(assignment.weeklyUsagePageID, otherPageID)
     }
 
     @MainActor
