@@ -1,4 +1,6 @@
 import SwiftUI
+import CoreGraphics
+import Combine
 
 @MainActor
 @Observable
@@ -38,6 +40,12 @@ struct ContentView: View {
     @State private var virtualMotion = VirtualMotionPlayer()
     @State private var codexMotionActivity = CodexMotionActivityRouter()
     @State private var codexMotionStopWorkItem: DispatchWorkItem?
+    @State private var isCodexMotionPlaying = false
+    @State private var lastLaunchpadOrCodexActivity = Date()
+    @State private var idleScreensaverSessionID: UUID?
+    @State private var idleScreensaverStopWorkItem: DispatchWorkItem?
+    private let idleScreensaverTimer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
+    private let weeklyUsageRefreshTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ZStack {
@@ -48,6 +56,8 @@ struct ContentView: View {
                     HStack(alignment: .top, spacing: 28) {
                         InspectorView(pad: $editedPad, pages: store.pages, selectedPageLEDIndex: selectedPageLEDIndex, onSelectPageLED: { selectedPageLEDIndex = $0 }, onUpdatePageColor: { index, color, selected in
                             store.updatePageColor(color, selected: selected, at: index)
+                        }, onUpdatePageName: { index, name in
+                            store.updatePageName(name, at: index)
                         }, onReset: {
                             store.resetSelectedPad()
                             synchronizeSelection()
@@ -55,7 +65,7 @@ struct ContentView: View {
                         .frame(width: 360)
                         .frame(minHeight: 600)
 
-                        LaunchpadView(page: store.currentPage, pages: store.pages, activePage: store.selectedPage, selectedPadID: store.selectedPadID, midiConnected: midi.isConnected, virtualPreviewEnabled: $virtualPreviewEnabled, motionFrame: virtualMotion.frame, onSelectPage: selectPage, onSelectPageLED: { selectedPageLEDIndex = $0 }, onSelectPad: selectPad, onRunPad: run, onVirtualPadPress: virtualPadPress)
+                        LaunchpadView(page: store.currentPage, pages: store.pages, activePage: store.selectedPage, selectedPadID: store.selectedPadID, midiConnected: midi.isConnected, virtualPreviewEnabled: $virtualPreviewEnabled, motionFrame: virtualMotion.frame, gridOverlay: weeklyUsageGridColors, onSelectPage: selectPage, onSelectPageLED: { selectedPageLEDIndex = $0 }, onSelectPad: selectPad, onRunPad: run, onVirtualPadPress: virtualPadPress)
                             .frame(minWidth: 610, minHeight: 620)
                     }
                 }
@@ -67,32 +77,48 @@ struct ContentView: View {
         .frame(minWidth: 1100, minHeight: 820)
         .onAppear {
             midi.onPagePressed = { index in
+                recordLaunchpadOrCodexActivity()
                 selectPage(index)
             }
             midi.onPadPressed = handleHardwarePadPress
             synchronizeSelection()
             midi.updateLEDs(for: store.pages, activePage: store.selectedPage)
+            synchronizeWeeklyUsageDisplay()
+            codex.refreshWeeklyUsage()
             launchpadLEDBubble.update(midi: midi, store: store)
         }
+        .onReceive(idleScreensaverTimer) { _ in evaluateIdleScreensaver() }
+        .onReceive(weeklyUsageRefreshTimer) { _ in codex.refreshWeeklyUsage() }
         .onChange(of: editedPad) { _, pad in store.update(pad) }
         .onChange(of: store.selectedPage) { _, _ in
             midi.updateLEDs(for: store.pages, activePage: store.selectedPage)
             virtualMotion.updateUnderlyingPage(store.currentPage)
+            synchronizeWeeklyUsageDisplay()
         }
         .onChange(of: store.pages) { _, _ in
             midi.updateLEDs(for: store.pages, activePage: store.selectedPage)
             virtualMotion.updateUnderlyingPage(store.currentPage)
+            synchronizeWeeklyUsageDisplay()
         }
         .onChange(of: store.codexMotionDisplaySettings) { _, _ in
             if !store.shouldPresentCodexMotion(on: store.currentPage) {
                 endCodexMotion()
             }
+            synchronizeWeeklyUsageDisplay()
             launchpadLEDBubble.update(midi: midi, store: store)
+        }
+        .onChange(of: codex.weeklyUsage, initial: true) { _, _ in
+            synchronizeWeeklyUsageDisplay()
+        }
+        .onChange(of: store.codexMotionDisplaySettings.idleScreensaver) { _, _ in
+            stopIdleScreensaver()
+            lastLaunchpadOrCodexActivity = Date()
         }
         .onChange(of: codex.activity, initial: true) { _, activity in
             codexActivity.updateAppServerActivity(activity)
         }
         .onChange(of: codexActivity.activity, initial: true) { _, activity in
+            recordLaunchpadOrCodexActivity()
             codexMotionActivity.present(
                 activity,
                 endingCurrentMotion: endCodexMotion,
@@ -158,6 +184,7 @@ struct ContentView: View {
     }
 
     private func handleHardwarePadPress(_ padID: String) {
+        recordLaunchpadOrCodexActivity()
         dismissCodexMotionIfNeeded(for: padID)
         selectedPageLEDIndex = nil
         guard let pad = store.currentPage.pads.first(where: { $0.id == padID }) else { return }
@@ -179,11 +206,13 @@ struct ContentView: View {
     }
 
     private func startCodexMotion(for activity: CodexActivity) {
+        stopIdleScreensaver(restorePage: false)
         guard activity != .idle,
               store.shouldPresentCodexMotion(on: store.currentPage),
               let preset = store.codexMotionPreset(for: activity) else { return }
         let presentation = store.codexMotionPresentation(for: activity)
         let loopingPreset = MotionPreset(name: preset.name, loop: true, frameDurationMs: preset.frameDurationMs, frames: preset.frames)
+        isCodexMotionPlaying = true
         midi.playMotion(
             loopingPreset,
             preservingPadLEDs: store.shouldPreservePadLEDsDuringCodexMotion(for: activity)
@@ -210,8 +239,99 @@ struct ContentView: View {
     private func endCodexMotion() {
         codexMotionStopWorkItem?.cancel()
         codexMotionStopWorkItem = nil
+        isCodexMotionPlaying = false
         midi.stopMotion()
         virtualMotion.stop()
+        lastLaunchpadOrCodexActivity = Date()
+    }
+
+    private func recordLaunchpadOrCodexActivity() {
+        lastLaunchpadOrCodexActivity = Date()
+        stopIdleScreensaver()
+    }
+
+    private var weeklyUsageGridColors: [String]? {
+        let settings = store.codexMotionDisplaySettings.weeklyUsageDisplay
+        guard settings.isEnabled,
+              settings.allowsPresentation(on: store.currentPage.id),
+              let weeklyUsage = codex.weeklyUsage else { return nil }
+        let remainingCellCount = CodexWeeklyUsageGrid.remainingCellCount(usedPercent: weeklyUsage.usedPercent)
+        let activeColor = CodexWeeklyUsageGrid.color(forUsedPercent: weeklyUsage.usedPercent).rawValue
+        return (0..<64).map {
+            CodexWeeklyUsageGrid.isRemainingCellActive(index: $0, remainingCellCount: remainingCellCount)
+                ? activeColor
+                : PadColor.off.rawValue
+        }
+    }
+
+    private func synchronizeWeeklyUsageDisplay() {
+        guard let colors = weeklyUsageGridColors else {
+            midi.setGridOverlay(colors: nil)
+            return
+        }
+        midi.setGridOverlay(colors: colors.compactMap(PadColor.init(rawValue:)))
+    }
+
+    private func evaluateIdleScreensaver() {
+        let settings = store.codexMotionDisplaySettings.idleScreensaver
+        let launchpadAndCodexIdleSeconds = Date().timeIntervalSince(lastLaunchpadOrCodexActivity)
+        let macIdleSeconds = CGEventSource.secondsSinceLastEventType(
+            .combinedSessionState,
+            eventType: CGEventType(rawValue: UInt32.max)!
+        )
+        let shouldPlay = LaunchpadIdleScreensaverPolicy.shouldPlay(
+            settings: settings,
+            hasPreset: store.idleScreensaverPreset != nil,
+            codexIsBusy: codexIsBusy,
+            launchpadAndCodexIdleSeconds: launchpadAndCodexIdleSeconds,
+            macIdleSeconds: macIdleSeconds
+        )
+
+        if shouldPlay {
+            startIdleScreensaverIfNeeded()
+        } else {
+            stopIdleScreensaver()
+        }
+    }
+
+    private func startIdleScreensaverIfNeeded() {
+        guard idleScreensaverSessionID == nil,
+              let preset = store.idleScreensaverPreset else { return }
+        let loopingPreset = MotionPreset(
+            name: preset.name,
+            loop: true,
+            frameDurationMs: preset.frameDurationMs,
+            frames: preset.frames
+        )
+        let sessionID = midi.playMotion(loopingPreset)
+        idleScreensaverSessionID = sessionID
+        virtualMotion.play(loopingPreset, over: store.currentPage, preservingPadLEDs: false)
+
+        let duration = store.codexMotionDisplaySettings.idleScreensaver.clampedDurationSeconds
+        let workItem = DispatchWorkItem {
+            guard idleScreensaverSessionID == sessionID else { return }
+            stopIdleScreensaver()
+            lastLaunchpadOrCodexActivity = Date()
+        }
+        idleScreensaverStopWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(duration), execute: workItem)
+    }
+
+    private func stopIdleScreensaver(restorePage: Bool = true) {
+        idleScreensaverStopWorkItem?.cancel()
+        idleScreensaverStopWorkItem = nil
+        guard let sessionID = idleScreensaverSessionID else { return }
+        idleScreensaverSessionID = nil
+        midi.stopMotion(ifCurrent: sessionID, restorePage: restorePage)
+        virtualMotion.stop()
+    }
+
+    private var codexIsBusy: Bool {
+        if isCodexMotionPlaying { return true }
+        return switch codexActivity.activity {
+        case .connecting, .running, .waitingForApproval: true
+        case .idle, .completed, .failed: false
+        }
     }
 }
 

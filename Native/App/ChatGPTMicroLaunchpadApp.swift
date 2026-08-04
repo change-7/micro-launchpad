@@ -31,6 +31,12 @@ struct ChatGPTMicroLaunchpadApp: App {
                     .keyboardShortcut(",", modifiers: [.command])
                 Button("단축키 권한 요청") { runner.requestAccessibilityPermission() }
             }
+
+            CommandGroup(replacing: .appTermination) {
+                Button("창 닫기") { appDelegate.hideMainWindow() }
+                    .keyboardShortcut("q", modifiers: [.command])
+            }
+
         }
     }
 }
@@ -107,6 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let connectionStarter: any CodexAppServerConnectionStarting
     private weak var mainWindow: NSWindow?
     private var statusItem: NSStatusItem?
+    private weak var launchpadLEDBubbleMenuItem: NSMenuItem?
     private var allowsTermination = false
     private var hasStartedCodexConnection = false
 
@@ -116,6 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         connectionStarter = codex
         codexActivityController = CodexActivityController()
         super.init()
+        configureLaunchpadLEDBubbleMenuUpdates()
     }
 
     init(
@@ -127,6 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self.codexActivityController = codexActivityController
         self.connectionStarter = connectionStarter ?? codex
         super.init()
+        configureLaunchpadLEDBubbleMenuUpdates()
     }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -140,7 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            guard let window = NSApp.windows.first else { return }
+            guard let window = Self.mainApplicationWindow(in: NSApp.windows) else { return }
 
             self.mainWindow = window
             window.delegate = self
@@ -173,7 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard allowsTermination else {
-            mainWindow?.orderOut(nil)
+            hideMainWindow()
             return .terminateCancel
         }
         return .terminateNow
@@ -192,11 +201,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func showMainWindow() {
-        let window = mainWindow ?? NSApp.windows.first
+        let window = mainWindow ?? Self.mainApplicationWindow(in: NSApp.windows)
         guard let window else { return }
         mainWindow = window
         window.makeKeyAndOrderFront(nil)
         NSRunningApplication.current.activate(options: [.activateAllWindows])
+    }
+
+    func hideMainWindow() {
+        mainWindow?.orderOut(nil)
+    }
+
+    static func mainApplicationWindow(in windows: [NSWindow]) -> NSWindow? {
+        windows.first { !($0 is NSPanel) && $0.styleMask.contains(.titled) }
     }
 
     func quitCompletely() {
@@ -213,6 +230,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         let menu = NSMenu()
         menu.addItem(withTitle: "설정 창 열기", action: #selector(openMainWindowFromMenu), keyEquivalent: "")
+        let bubbleItem = menu.addItem(
+            withTitle: "LED 말풍선 표시",
+            action: #selector(toggleLaunchpadLEDBubbleFromMenu),
+            keyEquivalent: ""
+        )
+        bubbleItem.state = .off
+        bubbleItem.isEnabled = false
+        launchpadLEDBubbleMenuItem = bubbleItem
         menu.addItem(.separator())
         menu.addItem(withTitle: "완전히 종료", action: #selector(quitFromMenu), keyEquivalent: "")
         menu.items.forEach { $0.target = self }
@@ -227,5 +252,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func quitFromMenu() {
         quitCompletely()
+    }
+
+    @objc private func toggleLaunchpadLEDBubbleFromMenu() {
+        launchpadLEDBubble.toggleVisibilityPreference()
+    }
+
+    private func configureLaunchpadLEDBubbleMenuUpdates() {
+        launchpadLEDBubble.onVisibilityPreferenceChanged = { [weak self] isVisible, isReady in
+            self?.launchpadLEDBubbleMenuItem?.state = isVisible ? .on : .off
+            self?.launchpadLEDBubbleMenuItem?.isEnabled = isReady
+        }
     }
 }

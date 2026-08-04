@@ -134,6 +134,35 @@ enum PadDefaults {
         }
     }
 
+    static func applyingCommonSideButtons(to pages: [LaunchPage]) -> [LaunchPage] {
+        guard let sourcePage = pages.first else { return pages }
+        let commonSideButtons = sourcePage.pads.filter { $0.id.hasPrefix("side_") }
+        return pages.map { page in
+            var page = page
+            for commonButton in commonSideButtons {
+                if let index = page.pads.firstIndex(where: { $0.id == commonButton.id }) {
+                    page.pads[index] = commonButton
+                } else {
+                    page.pads.append(commonButton)
+                }
+            }
+            return page
+        }
+    }
+
+    static func updatingCommonSideButton(_ button: Pad, in pages: [LaunchPage]) -> [LaunchPage] {
+        guard button.id.hasPrefix("side_") else { return pages }
+        return pages.map { page in
+            var page = page
+            if let index = page.pads.firstIndex(where: { $0.id == button.id }) {
+                page.pads[index] = button
+            } else {
+                page.pads.append(button)
+            }
+            return page
+        }
+    }
+
     private static func sidePad(_ index: Int) -> Pad {
         let descriptor = sideButtonDescriptors[index]
         return Pad(

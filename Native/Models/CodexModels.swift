@@ -251,6 +251,45 @@ enum CodexMotionDisplayScope: String, CaseIterable, Codable, Identifiable {
     }
 }
 
+struct CodexWeeklyUsage: Equatable, Sendable {
+    var usedPercent: Int
+    var resetsAt: Date?
+}
+
+enum CodexWeeklyUsageGrid {
+    static func remainingCellCount(usedPercent: Int) -> Int {
+        let clampedUsedPercent = min(max(usedPercent, 0), 100)
+        return Int((Double(100 - clampedUsedPercent) * 64 / 100).rounded(.up))
+    }
+
+    static func isRemainingCellActive(index: Int, remainingCellCount: Int) -> Bool {
+        guard (0..<64).contains(index) else { return false }
+        return index >= 64 - min(max(remainingCellCount, 0), 64)
+    }
+
+    static func color(forUsedPercent usedPercent: Int) -> PadColor {
+        switch min(max(usedPercent, 0), 100) {
+        case 0...49: .brightGreen
+        case 50...74: .amber
+        case 75...89: .orange
+        default: .brightRed
+        }
+    }
+}
+
+struct CodexWeeklyUsageDisplaySettings: Codable, Hashable {
+    var isEnabled = false
+    var scope: CodexMotionDisplayScope = .allPages
+    var pageID: UUID?
+
+    func allowsPresentation(on pageID: UUID) -> Bool {
+        switch scope {
+        case .allPages: true
+        case .specificPage: self.pageID == pageID
+        }
+    }
+}
+
 enum LaunchpadLEDBubbleSize: String, CaseIterable, Codable, Identifiable {
     case small
     case regular
@@ -275,6 +314,95 @@ enum LaunchpadLEDBubbleSize: String, CaseIterable, Codable, Identifiable {
     }
 }
 
+enum LaunchpadIdleInputScope: String, CaseIterable, Codable, Identifiable {
+    case launchpadAndCodex
+    case macAndCodex
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .launchpadAndCodex: "기기 입력만"
+        case .macAndCodex: "Mac 전체 입력"
+        }
+    }
+}
+
+struct LaunchpadIdleScreensaverSettings: Codable, Hashable {
+    static let defaultDelaySeconds = 300
+    static let defaultDurationSeconds = 60
+    static let minimumDelaySeconds = 5
+    static let maximumDelaySeconds = 86_400
+    static let minimumDurationSeconds = 5
+    static let maximumDurationSeconds = 86_400
+
+    var isEnabled = false
+    var inputScope: LaunchpadIdleInputScope = .launchpadAndCodex
+    var delaySeconds = defaultDelaySeconds
+    var durationSeconds = defaultDurationSeconds
+    var presetID: UUID?
+
+    init(
+        isEnabled: Bool = false,
+        inputScope: LaunchpadIdleInputScope = .launchpadAndCodex,
+        delaySeconds: Int = defaultDelaySeconds,
+        durationSeconds: Int = defaultDurationSeconds,
+        presetID: UUID? = nil
+    ) {
+        self.isEnabled = isEnabled
+        self.inputScope = inputScope
+        self.delaySeconds = delaySeconds
+        self.durationSeconds = durationSeconds
+        self.presetID = presetID
+    }
+
+    var clampedDelaySeconds: Int {
+        min(max(delaySeconds, Self.minimumDelaySeconds), Self.maximumDelaySeconds)
+    }
+
+    var clampedDurationSeconds: Int {
+        min(max(durationSeconds, Self.minimumDurationSeconds), Self.maximumDurationSeconds)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case isEnabled
+        case inputScope
+        case delaySeconds
+        case durationSeconds
+        case presetID
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? false
+        inputScope = try container.decodeIfPresent(LaunchpadIdleInputScope.self, forKey: .inputScope) ?? .launchpadAndCodex
+        delaySeconds = try container.decodeIfPresent(Int.self, forKey: .delaySeconds) ?? Self.defaultDelaySeconds
+        durationSeconds = try container.decodeIfPresent(Int.self, forKey: .durationSeconds) ?? Self.defaultDurationSeconds
+        presetID = try container.decodeIfPresent(UUID.self, forKey: .presetID)
+    }
+}
+
+enum LaunchpadIdleScreensaverPolicy {
+    static func shouldPlay(
+        settings: LaunchpadIdleScreensaverSettings,
+        hasPreset: Bool,
+        codexIsBusy: Bool,
+        launchpadAndCodexIdleSeconds: TimeInterval,
+        macIdleSeconds: TimeInterval?
+    ) -> Bool {
+        guard settings.isEnabled, hasPreset, !codexIsBusy else { return false }
+
+        let idleSeconds: TimeInterval
+        switch settings.inputScope {
+        case .launchpadAndCodex:
+            idleSeconds = launchpadAndCodexIdleSeconds
+        case .macAndCodex:
+            idleSeconds = min(launchpadAndCodexIdleSeconds, macIdleSeconds ?? 0)
+        }
+        return idleSeconds >= TimeInterval(settings.clampedDelaySeconds)
+    }
+}
+
 struct CodexMotionDisplaySettings: Codable, Hashable {
     var scope: CodexMotionDisplayScope = .allPages
     var pageID: UUID?
@@ -283,6 +411,8 @@ struct CodexMotionDisplaySettings: Codable, Hashable {
     var launchpadLEDBubbleSize: LaunchpadLEDBubbleSize = .regular
     var launchpadLEDBubbleOriginX: Double?
     var launchpadLEDBubbleOriginY: Double?
+    var idleScreensaver = LaunchpadIdleScreensaverSettings()
+    var weeklyUsageDisplay = CodexWeeklyUsageDisplaySettings()
 
     init(
         scope: CodexMotionDisplayScope = .allPages,
@@ -291,7 +421,9 @@ struct CodexMotionDisplaySettings: Codable, Hashable {
         showsLaunchpadLEDBubble: Bool = true,
         launchpadLEDBubbleSize: LaunchpadLEDBubbleSize = .regular,
         launchpadLEDBubbleOriginX: Double? = nil,
-        launchpadLEDBubbleOriginY: Double? = nil
+        launchpadLEDBubbleOriginY: Double? = nil,
+        idleScreensaver: LaunchpadIdleScreensaverSettings = LaunchpadIdleScreensaverSettings(),
+        weeklyUsageDisplay: CodexWeeklyUsageDisplaySettings = CodexWeeklyUsageDisplaySettings()
     ) {
         self.scope = scope
         self.pageID = pageID
@@ -300,6 +432,8 @@ struct CodexMotionDisplaySettings: Codable, Hashable {
         self.launchpadLEDBubbleSize = launchpadLEDBubbleSize
         self.launchpadLEDBubbleOriginX = launchpadLEDBubbleOriginX
         self.launchpadLEDBubbleOriginY = launchpadLEDBubbleOriginY
+        self.idleScreensaver = idleScreensaver
+        self.weeklyUsageDisplay = weeklyUsageDisplay
     }
 
     func allowsPresentation(on pageID: UUID) -> Bool {
@@ -343,6 +477,8 @@ struct CodexMotionDisplaySettings: Codable, Hashable {
         case launchpadLEDBubbleSize
         case launchpadLEDBubbleOriginX
         case launchpadLEDBubbleOriginY
+        case idleScreensaver
+        case weeklyUsageDisplay
     }
 
     private struct PersistedPreference: Decodable {
@@ -358,6 +494,8 @@ struct CodexMotionDisplaySettings: Codable, Hashable {
         launchpadLEDBubbleSize = try container.decodeIfPresent(LaunchpadLEDBubbleSize.self, forKey: .launchpadLEDBubbleSize) ?? .regular
         launchpadLEDBubbleOriginX = try container.decodeIfPresent(Double.self, forKey: .launchpadLEDBubbleOriginX)
         launchpadLEDBubbleOriginY = try container.decodeIfPresent(Double.self, forKey: .launchpadLEDBubbleOriginY)
+        idleScreensaver = try container.decodeIfPresent(LaunchpadIdleScreensaverSettings.self, forKey: .idleScreensaver) ?? LaunchpadIdleScreensaverSettings()
+        weeklyUsageDisplay = try container.decodeIfPresent(CodexWeeklyUsageDisplaySettings.self, forKey: .weeklyUsageDisplay) ?? CodexWeeklyUsageDisplaySettings()
     }
 }
 

@@ -41,6 +41,33 @@ final class CodexEventReducerTests: XCTestCase {
         XCTAssertNil(PadDefaults.sideButtonDescriptor(for: "side_6")?.defaultAction)
     }
 
+    func testCommonSideButtons_whenPagesHaveDifferentValues_useTheFirstPageAsTheSharedSource() {
+        var pages = PadDefaults.pages()
+        let firstIndex = pages[0].pads.firstIndex(where: { $0.id == "side_0" })!
+        let secondIndex = pages[1].pads.firstIndex(where: { $0.id == "side_0" })!
+        pages[0].pads[firstIndex].title = "공통 버튼"
+        pages[0].pads[firstIndex].idleColor = "green"
+        pages[1].pads[secondIndex].title = "페이지 전용 버튼"
+        pages[1].pads[secondIndex].idleColor = "red"
+
+        let synchronized = PadDefaults.applyingCommonSideButtons(to: pages)
+
+        XCTAssertEqual(synchronized[1].pads[secondIndex], synchronized[0].pads[firstIndex])
+    }
+
+    func testCommonSideButtonUpdate_updatesEveryPage() {
+        let pages = PadDefaults.pages()
+        var edited = pages[3].pads.first(where: { $0.id == "side_2" })!
+        edited.title = "공통 음소거"
+        edited.idleColor = "orange"
+
+        let updated = PadDefaults.updatingCommonSideButton(edited, in: pages)
+
+        XCTAssertTrue(updated.allSatisfy { page in
+            page.pads.first(where: { $0.id == "side_2" }) == edited
+        })
+    }
+
     func testTopButtonColor_whenPageIsSelected_usesSelectedPageColor() {
         let page = LaunchPage(
             name: "P1",

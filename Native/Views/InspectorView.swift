@@ -6,6 +6,7 @@ struct InspectorView: View {
     let selectedPageLEDIndex: Int?
     let onSelectPageLED: (Int?) -> Void
     let onUpdatePageColor: (Int, String, Bool) -> Void
+    let onUpdatePageName: (Int, String) -> Void
     let onReset: () -> Void
     let onRun: () -> Void
     @State private var registrationError = ""
@@ -30,6 +31,13 @@ struct InspectorView: View {
             .overlay(alignment: .bottom) { Divider().overlay(Color.white.opacity(0.18)) }
 
             if let pageIndex = selectedPageLEDIndex, pages.indices.contains(pageIndex) {
+                fieldSection("P 버튼 이름") {
+                    DarkTextField(text: Binding(
+                        get: { pages[pageIndex].name },
+                        set: { onUpdatePageName(pageIndex, $0) }
+                    ))
+                }
+                sectionDivider
                 fieldSection("런치패드 LED 색상") {
                     Button("현재 패드 LED 색상으로 돌아가기") {
                         onSelectPageLED(nil)

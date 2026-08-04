@@ -39,6 +39,9 @@ final class LaunchpadStore {
         if needsSortedSideButtonDefaults {
             loadedPages = PadDefaults.applyingSortedSideButtonDefaults(to: loadedPages)
         }
+        let commonSideButtonPages = PadDefaults.applyingCommonSideButtons(to: loadedPages)
+        let didSynchronizeCommonSideButtons = commonSideButtonPages != loadedPages
+        loadedPages = commonSideButtonPages
         pages = loadedPages
         motionPresets = (try? UserDefaults.standard.data(forKey: motionStorageKey)
             .flatMap { try JSONDecoder().decode([MotionPreset].self, from: $0) }) ?? []
@@ -60,7 +63,10 @@ final class LaunchpadStore {
             legacyPresentations: loadedPresentations
         )
         codexMotionDisplaySettings = restoredDisplaySettings.settings
-        if needsSideButtonMigration || needsSideButtonCategoryOrdering || needsSortedSideButtonDefaults {
+        if needsSideButtonMigration
+            || needsSideButtonCategoryOrdering
+            || needsSortedSideButtonDefaults
+            || didSynchronizeCommonSideButtons {
             if needsSideButtonMigration {
                 UserDefaults.standard.set(true, forKey: sideButtonDefaultsMigrationKey)
             }
@@ -86,6 +92,11 @@ final class LaunchpadStore {
     }
 
     func update(_ pad: Pad) {
+        if pad.id.hasPrefix("side_") {
+            pages = PadDefaults.updatingCommonSideButton(pad, in: pages)
+            save()
+            return
+        }
         guard let index = pages[selectedPage].pads.firstIndex(where: { $0.id == pad.id }) else { return }
         pages[selectedPage].pads[index] = pad
         save()
@@ -98,6 +109,12 @@ final class LaunchpadStore {
         } else {
             pages[index].pageIdleColor = PadColor(rawValue: color)?.rawValue ?? "off"
         }
+        save()
+    }
+
+    func updatePageName(_ name: String, at index: Int) {
+        guard pages.indices.contains(index) else { return }
+        pages[index].name = name
         save()
     }
 
@@ -128,6 +145,10 @@ final class LaunchpadStore {
             var updated = presentation
             if updated.presetID == preset.id { updated.presetID = nil }
             return updated
+        }
+        if codexMotionDisplaySettings.idleScreensaver.presetID == preset.id {
+            codexMotionDisplaySettings.idleScreensaver.presetID = nil
+            saveCodexMotionDisplaySettings()
         }
         saveMotionPresets()
         saveCodexMotionBindings()
@@ -197,6 +218,60 @@ final class LaunchpadStore {
         codexMotionDisplaySettings.launchpadLEDBubbleOriginX = origin.x
         codexMotionDisplaySettings.launchpadLEDBubbleOriginY = origin.y
         saveCodexMotionDisplaySettings()
+    }
+
+    func setIdleScreensaverEnabled(_ isEnabled: Bool) {
+        codexMotionDisplaySettings.idleScreensaver.isEnabled = isEnabled
+        saveCodexMotionDisplaySettings()
+    }
+
+    func setIdleScreensaverInputScope(_ scope: LaunchpadIdleInputScope) {
+        codexMotionDisplaySettings.idleScreensaver.inputScope = scope
+        saveCodexMotionDisplaySettings()
+    }
+
+    func setIdleScreensaverDelaySeconds(_ seconds: Int) {
+        codexMotionDisplaySettings.idleScreensaver.delaySeconds = min(
+            max(seconds, LaunchpadIdleScreensaverSettings.minimumDelaySeconds),
+            LaunchpadIdleScreensaverSettings.maximumDelaySeconds
+        )
+        saveCodexMotionDisplaySettings()
+    }
+
+    func setIdleScreensaverDurationSeconds(_ seconds: Int) {
+        codexMotionDisplaySettings.idleScreensaver.durationSeconds = min(
+            max(seconds, LaunchpadIdleScreensaverSettings.minimumDurationSeconds),
+            LaunchpadIdleScreensaverSettings.maximumDurationSeconds
+        )
+        saveCodexMotionDisplaySettings()
+    }
+
+    func setIdleScreensaverPresetID(_ presetID: UUID?) {
+        codexMotionDisplaySettings.idleScreensaver.presetID = presetID
+        saveCodexMotionDisplaySettings()
+    }
+
+    func setWeeklyUsageDisplayEnabled(_ isEnabled: Bool) {
+        codexMotionDisplaySettings.weeklyUsageDisplay.isEnabled = isEnabled
+        saveCodexMotionDisplaySettings()
+    }
+
+    func setWeeklyUsageDisplayScope(_ scope: CodexMotionDisplayScope) {
+        codexMotionDisplaySettings.weeklyUsageDisplay.scope = scope
+        if scope == .specificPage, codexMotionDisplaySettings.weeklyUsageDisplay.pageID == nil {
+            codexMotionDisplaySettings.weeklyUsageDisplay.pageID = pages.first?.id
+        }
+        saveCodexMotionDisplaySettings()
+    }
+
+    func setWeeklyUsageDisplayPageID(_ pageID: UUID) {
+        codexMotionDisplaySettings.weeklyUsageDisplay.pageID = pageID
+        saveCodexMotionDisplaySettings()
+    }
+
+    var idleScreensaverPreset: MotionPreset? {
+        guard let presetID = codexMotionDisplaySettings.idleScreensaver.presetID else { return nil }
+        return motionPresets.first { $0.id == presetID }
     }
 
     func shouldPreservePadLEDsDuringCodexMotion(for activity: CodexActivity) -> Bool {

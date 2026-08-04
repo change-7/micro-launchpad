@@ -3,6 +3,52 @@ import XCTest
 
 @MainActor
 final class CodexAppServerLaunchLifecycleTests: XCTestCase {
+    func testWeeklyUsage_whenWeeklyLimitIsSecondary_readsExactlyTheSevenDayWindow() {
+        let result: [String: Any] = [
+            "rateLimits": [
+                "primary": ["windowDurationMins": 300, "usedPercent": 4],
+                "secondary": ["windowDurationMins": 10_080, "usedPercent": 77, "resetsAt": 1_786_161_493]
+            ]
+        ]
+
+        let usage = CodexAppServerClient.weeklyUsage(from: result)
+
+        XCTAssertEqual(usage?.usedPercent, 77)
+        XCTAssertEqual(usage?.resetsAt?.timeIntervalSince1970, 1_786_161_493)
+    }
+
+    func testWeeklyUsage_whenOnlyALongerWindowExists_doesNotTreatItAsWeekly() {
+        let result: [String: Any] = [
+            "rateLimits": [
+                "primary": ["windowDurationMins": 43_200, "usedPercent": 12]
+            ]
+        ]
+
+        XCTAssertNil(CodexAppServerClient.weeklyUsage(from: result))
+    }
+
+    func testMainApplicationWindow_whenBubblePrecedesMainWindow_selectsTheTitledWindow() {
+        // Given
+        let bubble = NSPanel(
+            contentRect: .zero,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        let mainWindow = NSWindow(
+            contentRect: .zero,
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+
+        // When
+        let selectedWindow = AppDelegate.mainApplicationWindow(in: [bubble, mainWindow])
+
+        // Then
+        XCTAssertIdentical(selectedWindow, mainWindow)
+    }
+
     func testMissingCLIDiagnostic_whenDirectExecutableWritesGenericNotFoundWarning_isIgnored() {
         // Given
         let diagnostic = "warning: cache entry not found; continuing"

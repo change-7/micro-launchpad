@@ -89,6 +89,8 @@ struct CodexConnectionView: View {
 
             motionDisplayLocation
             launchpadLEDBubbleSetting
+            weeklyUsageDisplaySetting
+            idleScreensaverSetting
 
             ScrollView {
                 VStack(spacing: 0) {
@@ -177,6 +179,93 @@ struct CodexConnectionView: View {
         .padding(.vertical, 4)
     }
 
+    private var idleScreensaverSetting: some View {
+        HStack(spacing: 10) {
+            Toggle("LED 화면보호기", isOn: idleScreensaverEnabledBinding)
+                .font(.system(size: 11))
+                .toggleStyle(.switch)
+                .accessibilityIdentifier("idle-screensaver-toggle")
+
+            HStack(spacing: 10) {
+                Picker("화면보호기 입력 기준", selection: idleScreensaverInputScopeBinding) {
+                    ForEach(LaunchpadIdleInputScope.allCases) { scope in
+                        Text(scope.title).tag(scope)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 120)
+
+                TextField("초", value: idleScreensaverDelayBinding, format: .number)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 58)
+                    .multilineTextAlignment(.trailing)
+                    .accessibilityLabel("화면보호기 시작 대기 시간(초)")
+                Text("초 후")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+
+                TextField("초", value: idleScreensaverDurationBinding, format: .number)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 58)
+                    .multilineTextAlignment(.trailing)
+                    .accessibilityLabel("화면보호기 지속 시간(초)")
+                Text("초 재생")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+
+                Picker("화면보호기 모션", selection: idleScreensaverPresetBinding) {
+                    Text("모션 선택").tag(UUID?.none)
+                    ForEach(store.motionPresets) { preset in
+                        Text(preset.name).tag(Optional(preset.id))
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 160)
+            }
+            .disabled(!store.codexMotionDisplaySettings.idleScreensaver.isEnabled)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var weeklyUsageDisplaySetting: some View {
+        HStack(spacing: 10) {
+            Toggle("주간 잔여량 표시", isOn: weeklyUsageEnabledBinding)
+                .font(.system(size: 11))
+                .toggleStyle(.switch)
+                .accessibilityIdentifier("weekly-usage-display-toggle")
+
+            HStack(spacing: 10) {
+                Picker("주간 잔여량 표시 위치", selection: weeklyUsageScopeBinding) {
+                    ForEach(CodexMotionDisplayScope.allCases) { scope in
+                        Text(scope.title).tag(scope)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 120)
+
+                if store.codexMotionDisplaySettings.weeklyUsageDisplay.scope == .specificPage {
+                    Picker("주간 잔여량 표시 페이지", selection: weeklyUsagePageBinding) {
+                        ForEach(Array(store.pages.enumerated()), id: \.element.id) { index, page in
+                            Text("P\(index + 1) · \(page.name)").tag(page.id)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 170)
+                }
+
+                Text("주간 한도 잔여량을 64칸으로 표시")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            .disabled(!store.codexMotionDisplaySettings.weeklyUsageDisplay.isEnabled)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 4)
+    }
+
     private var motionDisplayPageBinding: Binding<UUID> {
         Binding(
             get: { store.codexMotionDisplaySettings.pageID ?? store.pages[0].id },
@@ -202,6 +291,62 @@ struct CodexConnectionView: View {
         Binding(
             get: { store.codexMotionDisplaySettings.launchpadLEDBubbleSize },
             set: { store.setLaunchpadLEDBubbleSize($0) }
+        )
+    }
+
+    private var idleScreensaverEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { store.codexMotionDisplaySettings.idleScreensaver.isEnabled },
+            set: { store.setIdleScreensaverEnabled($0) }
+        )
+    }
+
+    private var idleScreensaverInputScopeBinding: Binding<LaunchpadIdleInputScope> {
+        Binding(
+            get: { store.codexMotionDisplaySettings.idleScreensaver.inputScope },
+            set: { store.setIdleScreensaverInputScope($0) }
+        )
+    }
+
+    private var idleScreensaverDelayBinding: Binding<Int> {
+        Binding(
+            get: { store.codexMotionDisplaySettings.idleScreensaver.delaySeconds },
+            set: { store.setIdleScreensaverDelaySeconds($0) }
+        )
+    }
+
+    private var idleScreensaverPresetBinding: Binding<UUID?> {
+        Binding(
+            get: { store.codexMotionDisplaySettings.idleScreensaver.presetID },
+            set: { store.setIdleScreensaverPresetID($0) }
+        )
+    }
+
+    private var idleScreensaverDurationBinding: Binding<Int> {
+        Binding(
+            get: { store.codexMotionDisplaySettings.idleScreensaver.durationSeconds },
+            set: { store.setIdleScreensaverDurationSeconds($0) }
+        )
+    }
+
+    private var weeklyUsageEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { store.codexMotionDisplaySettings.weeklyUsageDisplay.isEnabled },
+            set: { store.setWeeklyUsageDisplayEnabled($0) }
+        )
+    }
+
+    private var weeklyUsageScopeBinding: Binding<CodexMotionDisplayScope> {
+        Binding(
+            get: { store.codexMotionDisplaySettings.weeklyUsageDisplay.scope },
+            set: { store.setWeeklyUsageDisplayScope($0) }
+        )
+    }
+
+    private var weeklyUsagePageBinding: Binding<UUID> {
+        Binding(
+            get: { store.codexMotionDisplaySettings.weeklyUsageDisplay.pageID ?? store.pages[0].id },
+            set: { store.setWeeklyUsageDisplayPageID($0) }
         )
     }
 

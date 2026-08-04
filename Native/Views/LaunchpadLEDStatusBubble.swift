@@ -10,10 +10,12 @@ final class LaunchpadLEDStatusBubble: NSObject, NSWindowDelegate {
 
     private let panel: NSPanel
     private weak var statusButton: NSStatusBarButton?
+    private weak var store: LaunchpadStore?
+    private weak var midi: LaunchpadMIDIManager?
     private var saveOrigin: ((CGPoint) -> Void)?
-    private var isApplyingFrame = false
     private var hasInstalledContent = false
     private var displayedSize: LaunchpadLEDBubbleSize?
+    var onVisibilityPreferenceChanged: ((Bool, Bool) -> Void)?
 
     override init() {
         panel = NSPanel(
@@ -38,8 +40,12 @@ final class LaunchpadLEDStatusBubble: NSObject, NSWindowDelegate {
     }
 
     func update(midi: LaunchpadMIDIManager, store: LaunchpadStore) {
+        self.midi = midi
+        self.store = store
         saveOrigin = { [weak store] origin in store?.setLaunchpadLEDBubbleOrigin(origin) }
-        guard store.codexMotionDisplaySettings.showsLaunchpadLEDBubble else {
+        let isVisible = store.codexMotionDisplaySettings.showsLaunchpadLEDBubble
+        onVisibilityPreferenceChanged?(isVisible, true)
+        guard isVisible else {
             close()
             return
         }
@@ -61,12 +67,28 @@ final class LaunchpadLEDStatusBubble: NSObject, NSWindowDelegate {
     }
 
     func close() {
+        if panel.isVisible {
+            saveOrigin?(panel.frame.origin)
+        }
         panel.orderOut(nil)
     }
 
     func windowDidMove(_ notification: Notification) {
-        guard !isApplyingFrame, panel.isVisible else { return }
+        guard panel.isVisible,
+              CGEventSource.buttonState(.combinedSessionState, button: .left) else { return }
         saveOrigin?(panel.frame.origin)
+    }
+
+    func toggleVisibilityPreference() {
+        guard let store, let midi else { return }
+        let isVisible = !store.codexMotionDisplaySettings.showsLaunchpadLEDBubble
+        store.setLaunchpadLEDBubbleVisible(isVisible)
+        onVisibilityPreferenceChanged?(isVisible, true)
+        if isVisible {
+            update(midi: midi, store: store)
+        } else {
+            close()
+        }
     }
 
     private func restoredOrigin(from store: LaunchpadStore) -> CGPoint {
@@ -104,15 +126,11 @@ final class LaunchpadLEDStatusBubble: NSObject, NSWindowDelegate {
     }
 
     private func setFrameOrigin(_ origin: CGPoint) {
-        isApplyingFrame = true
         panel.setFrameOrigin(clamped(origin))
-        isApplyingFrame = false
     }
 
     private func resize(to size: NSSize) {
-        isApplyingFrame = true
         panel.setFrame(NSRect(origin: panel.frame.origin, size: size), display: true)
-        isApplyingFrame = false
     }
 }
 

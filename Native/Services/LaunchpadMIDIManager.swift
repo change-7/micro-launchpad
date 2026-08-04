@@ -51,6 +51,8 @@ final class LaunchpadMIDIManager: @unchecked Sendable {
     private var connectedDestination = MIDIEndpointRef()
     private var latestPages: [LaunchPage] = []
     private var latestPageIndex = 0
+    private var persistentSideLEDValues: [UInt8]?
+    private var gridOverlay: [UInt8]?
     private var motionTimer: Timer?
     private var activeMotion: MotionPreset?
     private var activeMotionSessionID: UUID?
@@ -94,6 +96,15 @@ final class LaunchpadMIDIManager: @unchecked Sendable {
 
     func updateLEDs(for pages: [LaunchPage], activePage: Int) {
         guard pages.indices.contains(activePage) else { return }
+        let activePageChanged = !latestPages.isEmpty && activePage != latestPageIndex
+        let currentSideLEDValues = sideLEDValues(for: pages[activePage])
+        let previousSideLEDValues = latestPages.indices.contains(latestPageIndex)
+            ? sideLEDValues(for: latestPages[latestPageIndex])
+            : nil
+        if persistentSideLEDValues == nil
+            || (!activePageChanged && previousSideLEDValues != currentSideLEDValues) {
+            persistentSideLEDValues = currentSideLEDValues
+        }
         latestPages = pages
         latestPageIndex = activePage
         guard canSend else { return }
@@ -113,14 +124,23 @@ final class LaunchpadMIDIManager: @unchecked Sendable {
         for row in 0..<8 {
             for column in 0..<8 {
                 let pad = page.pads[row * 8 + column]
-                messages.append(LaunchpadMIDIMessage(status: 0x90, number: UInt8(row * 16 + column), value: color(for: pad.idleColor).midiValue))
+                let gridIndex = row * 8 + column
+                let value = gridOverlay?[gridIndex] ?? color(for: pad.idleColor).midiValue
+                messages.append(LaunchpadMIDIMessage(status: 0x90, number: UInt8(row * 16 + column), value: value))
             }
 
-            let side = page.pads.first(where: { $0.id == "side_\(row)" })
-            messages.append(LaunchpadMIDIMessage(status: 0x90, number: UInt8(row * 16 + 8), value: color(for: side?.idleColor ?? "off").midiValue))
+            let sideValue = persistentSideLEDValues?[row] ?? LaunchpadLEDColor.off.midiValue
+            messages.append(LaunchpadMIDIMessage(status: 0x90, number: UInt8(row * 16 + 8), value: sideValue))
         }
 
         send(messages)
+    }
+
+    func setGridOverlay(colors: [PadColor]?) {
+        let values = colors?.map { LaunchpadLEDColor(rawValue: $0.rawValue)?.midiValue ?? LaunchpadLEDColor.off.midiValue }
+        gridOverlay = values?.count == 64 ? values : nil
+        guard !latestPages.isEmpty, activeMotion == nil else { return }
+        updateLEDs(for: latestPages, activePage: latestPageIndex)
     }
 
     func flash(_ pad: Pad) {
@@ -296,6 +316,13 @@ final class LaunchpadMIDIManager: @unchecked Sendable {
         return (0..<64).map { index in
             guard page.pads.indices.contains(index) else { return .off }
             return color(for: page.pads[index].idleColor)
+        }
+    }
+
+    private func sideLEDValues(for page: LaunchPage) -> [UInt8] {
+        (0..<8).map { row in
+            let side = page.pads.first(where: { $0.id == "side_\(row)" })
+            return color(for: side?.idleColor ?? "off").midiValue
         }
     }
 

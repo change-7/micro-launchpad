@@ -8,6 +8,7 @@ struct LaunchpadView: View {
     let midiConnected: Bool
     @Binding var virtualPreviewEnabled: Bool
     let motionFrame: MotionFrame?
+    let gridOverlay: [String]?
     let onSelectPage: (Int) -> Void
     let onSelectPageLED: (Int) -> Void
     let onSelectPad: (Pad) -> Void
@@ -107,6 +108,9 @@ struct LaunchpadView: View {
     }
 
     private func motionColor(row: Int, column: Int) -> String? {
-        motionFrame?.pixels.first(where: { $0.row == row + 1 && $0.column == column + 1 })?.color ?? (motionFrame == nil ? nil : "off")
+        if let motionFrame {
+            return motionFrame.pixels.first(where: { $0.row == row + 1 && $0.column == column + 1 })?.color ?? "off"
+        }
+        return gridOverlay?[row * 8 + column]
     }
 }

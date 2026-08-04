@@ -7,6 +7,7 @@ final class CodexAppServerClient {
     private(set) var activity: CodexActivity = .idle
     private(set) var isConnected = false
     private(set) var message = "Codex App Server에 연결하지 않았습니다."
+    private(set) var weeklyUsage: CodexWeeklyUsage?
 
     private var process: Process?
     private var input: FileHandle?
@@ -118,6 +119,15 @@ final class CodexAppServerClient {
         }
     }
 
+    func refreshWeeklyUsage() {
+        guard isConnected,
+              !pendingRequests.values.contains(where: { request in
+                  if case .weeklyUsage = request { return true }
+                  return false
+              }) else { return }
+        sendRequest(method: "account/rateLimits/read", params: [:], kind: .weeklyUsage)
+    }
+
     private func startTurn(threadID: String, prompt: String, workingDirectory: String) {
         sendRequest(
             method: "turn/start",
@@ -166,6 +176,7 @@ final class CodexAppServerClient {
                 isConnected = true
                 activity = .idle
                 message = "Codex App Server 연결됨"
+                refreshWeeklyUsage()
                 return
             }
             if let eventActivity = CodexEventReducer.activity(for: method) {
@@ -178,6 +189,10 @@ final class CodexAppServerClient {
         guard let requestID = object["id"] as? Int,
               let request = pendingRequests.removeValue(forKey: requestID) else { return }
         if let error = object["error"] as? [String: Any] {
+            if case .weeklyUsage = request {
+                weeklyUsage = nil
+                return
+            }
             activity = .failed
             message = "Codex 오류: \((error["message"] as? String) ?? "알 수 없는 오류")"
             return
@@ -189,6 +204,7 @@ final class CodexAppServerClient {
             isConnected = true
             activity = .idle
             message = "Codex App Server 연결됨"
+            refreshWeeklyUsage()
         case let .threadStart(prompt, workingDirectory):
             guard let result = object["result"] as? [String: Any],
                   let thread = result["thread"] as? [String: Any],
@@ -202,6 +218,8 @@ final class CodexAppServerClient {
         case .turnStart:
             activity = .running
             message = "Codex 작업 중"
+        case .weeklyUsage:
+            weeklyUsage = Self.weeklyUsage(from: object["result"] as? [String: Any])
         }
     }
 
@@ -241,6 +259,34 @@ final class CodexAppServerClient {
         pendingRequests.removeAll(keepingCapacity: false)
         activeThreadID = nil
         isUsingShellFallback = false
+        weeklyUsage = nil
+    }
+
+    static func weeklyUsage(from result: [String: Any]?) -> CodexWeeklyUsage? {
+        guard let result else { return nil }
+        var candidates = [[String: Any]]()
+        if let rateLimits = result["rateLimits"] as? [String: Any] {
+            candidates.append(rateLimits)
+        }
+        if let rateLimitsByLimitID = result["rateLimitsByLimitId"] as? [String: [String: Any]] {
+            candidates.append(contentsOf: rateLimitsByLimitID.values)
+        }
+        for limit in candidates {
+            for windowKey in ["primary", "secondary"] {
+                guard let window = limit[windowKey] as? [String: Any],
+                      let duration = number(window["windowDurationMins"]), duration == 10_080,
+                      let usedPercent = number(window["usedPercent"]) else { continue }
+                let resetsAt = number(window["resetsAt"]).map { Date(timeIntervalSince1970: $0) }
+                return CodexWeeklyUsage(usedPercent: Int(usedPercent.rounded()), resetsAt: resetsAt)
+            }
+        }
+        return nil
+    }
+
+    private static func number(_ value: Any?) -> TimeInterval? {
+        if let number = value as? NSNumber { return number.doubleValue }
+        if let string = value as? String { return Double(string) }
+        return nil
     }
 
     static func launchCommand(isExecutable: (String) -> Bool) -> (executableURL: URL, arguments: [String]) {
@@ -259,5 +305,6 @@ final class CodexAppServerClient {
         case initialize
         case threadStart(prompt: String, workingDirectory: String)
         case turnStart
+        case weeklyUsage
     }
 }
