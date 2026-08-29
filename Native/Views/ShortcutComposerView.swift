@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ShortcutComposerView: View {
@@ -104,9 +105,17 @@ struct ShortcutComposerView: View {
             VStack(alignment: .leading, spacing: 6) {
                 if !targetAppBundleIdentifier.isEmpty {
                     HStack(spacing: 7) {
-                        Image(systemName: "app.fill")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.orange)
+                        if let appIcon = AppRegistrationService.icon(for: targetAppBundleIdentifier) {
+                            Image(nsImage: appIcon)
+                                .resizable()
+                                .interpolation(.high)
+                                .scaledToFit()
+                                .frame(width: 18, height: 18)
+                        } else {
+                            Image(systemName: "app.fill")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.orange)
+                        }
                         Text(targetApplicationDescription)
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(Color.white.opacity(0.78))

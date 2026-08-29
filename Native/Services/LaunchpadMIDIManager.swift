@@ -107,7 +107,6 @@ final class LaunchpadMIDIManager: @unchecked Sendable {
         }
         latestPages = pages
         latestPageIndex = activePage
-        guard canSend else { return }
         if activeMotion != nil {
             sendCurrentMotionFrame()
             return
@@ -290,7 +289,6 @@ final class LaunchpadMIDIManager: @unchecked Sendable {
     private func sendCurrentMotionFrame() {
         guard let preset = activeMotion, preset.frames.indices.contains(motionFrameIndex) else { return }
         let frame = preset.frames[motionFrameIndex]
-        guard canSend else { return }
         var pixelColors = ordinaryGridColors()
         if !preservesPadLEDsDuringMotion {
             pixelColors = Array(repeating: LaunchpadLEDColor.off, count: 64)

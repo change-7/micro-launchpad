@@ -22,18 +22,19 @@ final class CodexMotionLEDCompositionTests: XCTestCase {
         XCTAssertTrue(CodexWeeklyUsageGrid.isRemainingCellActive(index: 63, remainingCellCount: 15))
     }
 
-    func testWeeklyUsageGrid_whenOneHundredPercentRemains_rendersDoubleZeroDigits() {
-        let pixels = CodexWeeklyUsageGrid.numericPixels(remainingPercent: 100)
+    func testWeeklyUsageGrid_whenAtExtremes_rendersZeroAndDoubleZero() {
+        let zero = CodexWeeklyUsageGrid.numericPixels(remainingPercent: 0)
+        let hundred = CodexWeeklyUsageGrid.numericPixels(remainingPercent: 100)
 
-        XCTAssertTrue(pixels[16])
-        XCTAssertFalse(pixels[17])
-        XCTAssertTrue(pixels[20])
-        XCTAssertFalse(pixels[21])
+        XCTAssertEqual(zero.filter { $0 }.count, 12)
+        XCTAssertEqual(hundred.filter { $0 }.count, 24)
     }
 
     func testDisplaySettings_whenWeeklyUsageIsLimitedToOnePage_roundTripsThePage() throws {
         let pageID = UUID()
         let settings = CodexMotionDisplaySettings(
+            scope: .specificPage,
+            pageID: pageID,
             weeklyUsageDisplay: CodexWeeklyUsageDisplaySettings(
                 isEnabled: true,
                 scope: .specificPage,
@@ -47,6 +48,7 @@ final class CodexMotionLEDCompositionTests: XCTestCase {
         )
 
         XCTAssertTrue(restored.weeklyUsageDisplay.isEnabled)
+        XCTAssertTrue(restored.allowsPresentation(on: pageID))
         XCTAssertTrue(restored.weeklyUsageDisplay.allowsPresentation(on: pageID))
         XCTAssertFalse(restored.weeklyUsageDisplay.allowsPresentation(on: UUID()))
     }
@@ -65,23 +67,6 @@ final class CodexMotionLEDCompositionTests: XCTestCase {
         XCTAssertEqual(restored.style, .level)
     }
 
-    func testDisplayPageAssignment_whenPagesMatch_movesWeeklyUsageToAnotherPage() {
-        // Given
-        let motionPageID = UUID()
-        let otherPageID = UUID()
-
-        // When
-        let assignment = CodexDisplayPageAssignment.separate(
-            motionPageID: motionPageID,
-            weeklyUsagePageID: motionPageID,
-            availablePageIDs: [motionPageID, otherPageID]
-        )
-
-        // Then
-        XCTAssertEqual(assignment.motionPageID, motionPageID)
-        XCTAssertEqual(assignment.weeklyUsagePageID, otherPageID)
-    }
-
     @MainActor
     func testLEDState_whenLaunchpadOutputChanges_keepsTheExactVisibleButtonValues() {
         // Given
@@ -95,6 +80,28 @@ final class CodexMotionLEDCompositionTests: XCTestCase {
         XCTAssertEqual(midi.ledState.grid[0], 44)
         XCTAssertEqual(midi.ledState.side[0], 12)
         XCTAssertEqual(midi.ledState.top[0], 60)
+    }
+
+    @MainActor
+    func testLEDState_whenLaunchpadIsDisconnected_tracksPageAndMotionFramesForTheBubble() {
+        // Given
+        let midi = LaunchpadMIDIManager(startsMIDIClient: false)
+        let pages = eightPages(first: page(gridColors: ["green"]))
+        let motion = MotionPreset(
+            name: "테스트",
+            loop: true,
+            frameDurationMs: 1_000,
+            frames: [MotionFrame(pixels: [MotionPixel(row: 1, column: 1, color: "brightRed")])]
+        )
+
+        // When
+        midi.updateLEDs(for: pages, activePage: 0)
+        midi.playMotion(motion)
+
+        // Then
+        XCTAssertEqual(midi.ledState.top[0], 60)
+        XCTAssertEqual(midi.ledState.grid[0], 15)
+        midi.stopMotion()
     }
 
     func testDisplaySettings_whenLEDBubbleIsEnabled_roundTripsItsVisibilityAndPosition() throws {

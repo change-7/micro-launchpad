@@ -6,12 +6,32 @@ final class CodexEventReducerTests: XCTestCase {
         XCTAssertEqual(CodexEventReducer.activity(for: "TURN/STARTED"), .running)
     }
 
+    func testActivity_whenCodexStreamsAnyTurnOrItemProgress_remainsRunning() {
+        let progressMethods = [
+            "item/agentMessage/delta",
+            "item/commandExecution/outputDelta",
+            "item/completed",
+            "turn/diff/updated",
+            "thread/realtime/itemAdded",
+            "rawResponse/completed"
+        ]
+
+        for method in progressMethods {
+            XCTAssertEqual(CodexEventReducer.activity(for: method), .running, "Expected \(method) to keep Codex marked as running")
+        }
+    }
+
     func testActivity_whenTurnCompletes() {
         XCTAssertEqual(CodexEventReducer.activity(for: "turn/completed"), .completed)
     }
 
     func testActivity_whenApprovalIsRequested() {
         XCTAssertEqual(CodexEventReducer.activity(for: "item/commandExecution/requestApproval"), .waitingForApproval)
+    }
+
+    func testActivity_whenCodexIsAwaitingConfirmationOrInput() {
+        XCTAssertEqual(CodexEventReducer.activity(for: "turn/awaitingInput"), .waitingForApproval)
+        XCTAssertEqual(CodexEventReducer.activity(for: "confirmation/required"), .waitingForApproval)
     }
 
     func testActivity_whenUnrelatedNotificationArrives() {
@@ -168,5 +188,43 @@ final class CodexEventReducerTests: XCTestCase {
 
         // Then
         XCTAssertTrue(shouldDismiss)
+    }
+
+    func testGridPadSwap_movesConfigurationWithoutMovingPhysicalIDs() {
+        var page = LaunchPage(
+            name: "P1",
+            pads: [
+                Pad(id: "grid_0_0", title: "ChatGPT", symbol: "sparkles", idleColor: "green", activeColor: "brightGreen", action: PadAction(kind: .app, value: "ChatGPT")),
+                Pad(id: "grid_0_1", title: "브라우저", symbol: "globe", idleColor: "amber", activeColor: "yellow", action: PadAction(kind: .url, value: "https://example.com"))
+            ]
+        )
+
+        XCTAssertTrue(page.swapGridPadConfigurations(from: "grid_0_0", to: "grid_0_1"))
+        XCTAssertEqual(page.pads[0].id, "grid_0_0")
+        XCTAssertEqual(page.pads[0].title, "브라우저")
+        XCTAssertEqual(page.pads[0].action.kind, .url)
+        XCTAssertEqual(page.pads[1].id, "grid_0_1")
+        XCTAssertEqual(page.pads[1].title, "ChatGPT")
+        XCTAssertEqual(page.pads[1].action.kind, .app)
+    }
+
+    func testGridPadClear_removesConfigurationWithoutRemovingPhysicalPad() {
+        var page = LaunchPage(name: "Test", pads: [
+            Pad(id: "grid_0_0", title: "Delete me", symbol: "trash", idleColor: "red", activeColor: "green", action: PadAction(kind: .url, value: "https://example.com"))
+        ])
+
+        XCTAssertTrue(page.clearGridPadConfiguration("grid_0_0"))
+        XCTAssertEqual(page.pads, [Pad(id: "grid_0_0")])
+    }
+
+    func testMotionPresetRename_trimsAndPersistsTheNewName() {
+        let store = LaunchpadStore()
+        let preset = MotionPreset(name: "Old", loop: false, frameDurationMs: 100, frames: [MotionFrame(pixels: [])])
+        store.addMotionPreset(preset)
+
+        XCTAssertTrue(store.renameMotionPreset(id: preset.id, to: "  New Name  "))
+        XCTAssertEqual(store.motionPresets.first(where: { $0.id == preset.id })?.name, "New Name")
+
+        store.removeMotionPreset(preset)
     }
 }

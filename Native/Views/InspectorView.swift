@@ -438,7 +438,7 @@ private struct LaunchpadIconPicker: View {
     }
 }
 
-private struct DarkTextField: View {
+struct DarkTextField: View {
     @Binding var text: String
     var placeholder = ""
 

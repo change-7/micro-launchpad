@@ -123,6 +123,7 @@ private final class CodexDesktopTaskMonitorWorker: @unchecked Sendable {
 
     private static let replacementAnchorByteCount = 64 * 1_024
     private static let initialMetadataProbeByteCount = 64 * 1_024
+    private static let initialTaskRecoveryLookback: TimeInterval = 24 * 60 * 60
 
     private let queue = DispatchQueue(label: "CodexDesktopTaskMonitor.scan", qos: .utility)
     private let sessionsRootURL: URL
@@ -238,7 +239,9 @@ private final class CodexDesktopTaskMonitorWorker: @unchecked Sendable {
     }
 
     private func replaceState(for url: URL, snapshot: FileSnapshot, outputs: inout [Output]) {
-        let initialOffset = isInitialDiscovery ? snapshot.byteCount : 0
+        let restoresInitialTasks = isInitialDiscovery
+            && Date().timeIntervalSince(snapshot.modificationDate) <= Self.initialTaskRecoveryLookback
+        let initialOffset = isInitialDiscovery && !restoresInitialTasks ? snapshot.byteCount : 0
         guard let trailingData = readReplacementAnchor(from: url, through: initialOffset) else {
             transcripts.removeValue(forKey: url)
             outputs.append(.diagnostic(.transcriptUnreadable(url)))
@@ -252,15 +255,28 @@ private final class CodexDesktopTaskMonitorWorker: @unchecked Sendable {
             modificationDate: snapshot.modificationDate
         )
         if isInitialDiscovery,
+           !restoresInitialTasks,
            !primeInitialMetadata(from: url, byteCount: snapshot.byteCount, parser: &state.parser) {
             transcripts.removeValue(forKey: url)
             outputs.append(.diagnostic(.transcriptUnreadable(url)))
             return
         }
-        guard readAppend(from: url, byteCount: snapshot.byteCount, state: &state, outputs: &outputs) else {
+        guard readAppend(
+            from: url,
+            byteCount: snapshot.byteCount,
+            state: &state,
+            outputs: &outputs,
+            publishesEvents: !isInitialDiscovery
+        ) else {
             publishTerminalEvents(for: state.parser, outputs: &outputs)
             transcripts.removeValue(forKey: url)
             return
+        }
+        if restoresInitialTasks {
+            let activeEvents = state.parser.activeTaskIDs
+                .sorted { ($0.transcriptID, $0.turnID) < ($1.transcriptID, $1.turnID) }
+                .map(DesktopCodexTaskLifecycleEvent.started)
+            if !activeEvents.isEmpty { outputs.append(.events(activeEvents)) }
         }
         transcripts[url] = state
     }
@@ -290,7 +306,8 @@ private final class CodexDesktopTaskMonitorWorker: @unchecked Sendable {
         from url: URL,
         byteCount: UInt64,
         state: inout TranscriptState,
-        outputs: inout [Output]
+        outputs: inout [Output],
+        publishesEvents: Bool = true
     ) -> Bool {
         guard byteCount > state.offset else { return true }
         do {
@@ -318,7 +335,7 @@ private final class CodexDesktopTaskMonitorWorker: @unchecked Sendable {
                         byteLimit: DesktopCodexTaskParser.maximumIncompleteRecordByteCount
                     )))
                 }
-                if !events.isEmpty { outputs.append(.events(events)) }
+                if publishesEvents, !events.isEmpty { outputs.append(.events(events)) }
             }
             return true
         } catch {

@@ -33,9 +33,9 @@ struct ContentView: View {
     let launchpadLEDBubble: LaunchpadLEDStatusBubble
     @State private var editedPad = Pad(id: "grid_0_0")
     @State private var showingPermissionAlert = false
-    @State private var showingMotionPresets = false
     @State private var selectedPageLEDIndex: Int?
     @State private var showingCodexConnection = false
+    @State private var showingSmartphoneSettings = false
     @State private var virtualPreviewEnabled = true
     @State private var virtualMotion = VirtualMotionPlayer()
     @State private var codexMotionActivity = CodexMotionActivityRouter()
@@ -50,29 +50,7 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             Color(red: 0.035, green: 0.035, blue: 0.045).ignoresSafeArea()
-            ScrollView {
-                VStack(spacing: 18) {
-                    PageQuickSwitchView(pages: store.pages, activePage: store.selectedPage, midiConnected: midi.isConnected, codexConnected: codex.isConnected, onSelect: selectPage, onOpenMotionPresets: { showingMotionPresets = true }, onOpenCodex: { showingCodexConnection = true })
-                    HStack(alignment: .top, spacing: 28) {
-                        InspectorView(pad: $editedPad, pages: store.pages, selectedPageLEDIndex: selectedPageLEDIndex, onSelectPageLED: { selectedPageLEDIndex = $0 }, onUpdatePageColor: { index, color, selected in
-                            store.updatePageColor(color, selected: selected, at: index)
-                        }, onUpdatePageName: { index, name in
-                            store.updatePageName(name, at: index)
-                        }, onReset: {
-                            store.resetSelectedPad()
-                            synchronizeSelection()
-                        }, onRun: { run(editedPad) })
-                        .frame(width: 360)
-                        .frame(minHeight: 600)
-
-                        LaunchpadView(page: store.currentPage, pages: store.pages, activePage: store.selectedPage, selectedPadID: store.selectedPadID, midiConnected: midi.isConnected, virtualPreviewEnabled: $virtualPreviewEnabled, motionFrame: virtualMotion.frame, gridOverlay: weeklyUsageGridColors, onSelectPage: selectPage, onSelectPageLED: { selectedPageLEDIndex = $0 }, onSelectPad: selectPad, onRunPad: run, onVirtualPadPress: virtualPadPress)
-                            .frame(minWidth: 610, minHeight: 620)
-                    }
-                }
-                .frame(maxWidth: 1120)
-                .padding(.horizontal, 18)
-                .padding(.bottom, 18)
-            }
+            launchpadContent
         }
         .frame(minWidth: 1100, minHeight: 820)
         .onAppear {
@@ -81,11 +59,15 @@ struct ContentView: View {
                 selectPage(index)
             }
             midi.onPadPressed = handleHardwarePadPress
+            launchpadLEDBubble.onSelectPage = { index in
+                selectPage(index)
+            }
+            codex.setRemoteSmartphonePagesProvider { SmartphoneDefaults.persistedPages() }
             synchronizeSelection()
             midi.updateLEDs(for: store.pages, activePage: store.selectedPage)
             synchronizeWeeklyUsageDisplay()
             codex.refreshWeeklyUsage()
-            launchpadLEDBubble.update(midi: midi, store: store)
+            updateStatusBubble()
         }
         .onReceive(idleScreensaverTimer) { _ in evaluateIdleScreensaver() }
         .onReceive(weeklyUsageRefreshTimer) { _ in codex.refreshWeeklyUsage() }
@@ -101,15 +83,19 @@ struct ContentView: View {
             virtualMotion.updateUnderlyingPage(store.currentPage)
             synchronizeWeeklyUsageDisplay()
         }
+        .onChange(of: store.smartphonePages) { _, _ in
+            codex.publishRemoteState()
+        }
         .onChange(of: store.codexMotionDisplaySettings) { _, _ in
             if !store.shouldPresentCodexMotion(on: store.currentPage) {
                 endCodexMotion()
             }
             synchronizeWeeklyUsageDisplay()
-            launchpadLEDBubble.update(midi: midi, store: store)
+            updateStatusBubble()
         }
         .onChange(of: codex.weeklyUsage, initial: true) { _, _ in
             synchronizeWeeklyUsageDisplay()
+            updateStatusBubble()
         }
         .onChange(of: store.codexMotionDisplaySettings.idleScreensaver) { _, _ in
             stopIdleScreensaver()
@@ -133,15 +119,76 @@ struct ContentView: View {
         } message: {
             Text("macOS 단축키를 실행하려면 이 앱을 손쉬운 사용에 허용하세요.")
         }
-        .sheet(isPresented: $showingMotionPresets) {
-            MotionPresetView(store: store, midi: midi)
-        }
         .sheet(isPresented: $showingCodexConnection) {
             CodexConnectionView(
                 store: store,
                 midi: midi,
                 codex: codex
             )
+        }
+        .sheet(isPresented: $showingSmartphoneSettings) {
+            SmartphoneSettingsView(store: store, runner: runner)
+                .frame(minWidth: 900, minHeight: 680)
+        }
+    }
+
+    private var launchpadContent: some View {
+        ScrollView {
+            VStack(spacing: 18) {
+                PageQuickSwitchView(
+                    pages: store.pages,
+                    activePage: store.selectedPage,
+                    midiConnected: midi.isConnected,
+                    codexConnected: codex.isConnected,
+                    onSelect: selectPage,
+                    onOpenCodex: { showingCodexConnection = true },
+                    onOpenSmartphone: { showingSmartphoneSettings = true }
+                )
+                HStack(alignment: .top, spacing: 28) {
+                    InspectorView(
+                        pad: $editedPad,
+                        pages: store.pages,
+                        selectedPageLEDIndex: selectedPageLEDIndex,
+                        onSelectPageLED: { selectedPageLEDIndex = $0 },
+                        onUpdatePageColor: { index, color, selected in
+                            store.updatePageColor(color, selected: selected, at: index)
+                        },
+                        onUpdatePageName: { index, name in store.updatePageName(name, at: index) },
+                        onReset: {
+                            if editedPad.id.hasPrefix("grid_") {
+                                deleteGridPad(editedPad.id)
+                            } else {
+                                store.resetSelectedPad()
+                                synchronizeSelection()
+                            }
+                        },
+                        onRun: { run(editedPad) }
+                    )
+                    .frame(width: 360)
+                    .frame(minHeight: 600)
+
+                    LaunchpadView(
+                        page: store.currentPage,
+                        pages: store.pages,
+                        activePage: store.selectedPage,
+                        selectedPadID: store.selectedPadID,
+                        midiConnected: midi.isConnected,
+                        virtualPreviewEnabled: $virtualPreviewEnabled,
+                        motionFrame: virtualMotion.frame,
+                        gridOverlay: weeklyUsageGridColors,
+                        onSelectPage: selectPage,
+                        onSelectPageLED: { selectedPageLEDIndex = $0 },
+                        onSelectPad: selectPad,
+                        onRunPad: run,
+                        onVirtualPadPress: virtualPadPress,
+                        onMoveGridPad: moveGridPad
+                    )
+                    .frame(minWidth: 610, minHeight: 620)
+                }
+            }
+            .frame(maxWidth: 1120)
+            .padding(.horizontal, 18)
+            .padding(.bottom, 18)
         }
     }
 
@@ -173,6 +220,23 @@ struct ContentView: View {
         selectedPageLEDIndex = nil
         store.selectedPadID = pad.id
         synchronizeSelection()
+    }
+
+    private func moveGridPad(from sourceID: String, to destinationID: String) {
+        guard store.swapGridPadConfigurations(from: sourceID, to: destinationID) else { return }
+        selectedPageLEDIndex = nil
+        synchronizeSelection()
+        midi.updateLEDs(for: store.pages, activePage: store.selectedPage)
+        updateStatusBubble()
+    }
+
+    private func deleteGridPad(_ padID: String) {
+        guard store.clearGridPadConfiguration(padID) else { return }
+        store.selectedPadID = padID
+        selectedPageLEDIndex = nil
+        synchronizeSelection()
+        midi.updateLEDs(for: store.pages, activePage: store.selectedPage)
+        updateStatusBubble()
     }
 
     private func run(_ pad: Pad) {
@@ -209,9 +273,9 @@ struct ContentView: View {
     private func startCodexMotion(for activity: CodexActivity) {
         stopIdleScreensaver(restorePage: false)
         guard activity != .idle,
-              store.shouldPresentCodexMotion(on: store.currentPage),
-              let preset = store.codexMotionPreset(for: activity) else { return }
+              store.shouldPresentCodexMotion(on: store.currentPage) else { return }
         let presentation = store.codexMotionPresentation(for: activity)
+        guard let preset = store.codexMotionPreset(for: activity) else { return }
         let loopingPreset = MotionPreset(name: preset.name, loop: true, frameDurationMs: preset.frameDurationMs, frames: preset.frames)
         isCodexMotionPlaying = true
         midi.playMotion(
@@ -224,6 +288,10 @@ struct ContentView: View {
             preservingPadLEDs: store.shouldPreservePadLEDsDuringCodexMotion(for: activity)
         )
 
+        scheduleCodexMotionStop(using: presentation, activity: activity)
+    }
+
+    private func scheduleCodexMotionStop(using presentation: CodexMotionPresentation, activity: CodexActivity) {
         guard let delay = presentation.automaticStopDelay(for: activity) else { return }
         let workItem = DispatchWorkItem { endCodexMotion() }
         codexMotionStopWorkItem = workItem
@@ -250,7 +318,13 @@ struct ContentView: View {
         isCodexMotionPlaying = false
         midi.stopMotion()
         virtualMotion.stop()
+        synchronizeWeeklyUsageDisplay()
+        updateStatusBubble()
         lastLaunchpadOrCodexActivity = Date()
+    }
+
+    private func updateStatusBubble() {
+        launchpadLEDBubble.update(midi: midi, store: store)
     }
 
     private func recordLaunchpadOrCodexActivity() {
@@ -261,6 +335,7 @@ struct ContentView: View {
     private var weeklyUsageGridColors: [String]? {
         let settings = store.codexMotionDisplaySettings.weeklyUsageDisplay
         guard settings.isEnabled,
+              !isCodexMotionPlaying,
               settings.allowsPresentation(on: store.currentPage.id),
               let weeklyUsage = codex.weeklyUsage else { return nil }
         let remainingCellCount = CodexWeeklyUsageGrid.remainingCellCount(usedPercent: weeklyUsage.usedPercent)
@@ -354,8 +429,8 @@ private struct PageQuickSwitchView: View {
     let midiConnected: Bool
     let codexConnected: Bool
     let onSelect: (Int) -> Void
-    let onOpenMotionPresets: () -> Void
     let onOpenCodex: () -> Void
+    let onOpenSmartphone: () -> Void
 
     var body: some View {
         VStack(spacing: 12) {
@@ -364,22 +439,24 @@ private struct PageQuickSwitchView: View {
                 Text("페이지 퀵 스위처").font(.system(size: 14, weight: .bold))
                 Text("(TOP CC 1~8 연동)").font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
                 Spacer()
-                Button(action: onOpenMotionPresets) {
-                    Label("모션 프리셋", systemImage: "sparkles.square.filled.on.square")
-                        .font(.system(size: 11, weight: .semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
-                }
-                .buttonStyle(.plain)
                 Button(action: onOpenCodex) {
-                    Label("Codex", systemImage: "cpu")
-                        .font(.system(size: 11, weight: .semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 32, height: 28)
                         .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Codex 설정")
+                Button(action: onOpenSmartphone) {
+                    Label("휴대폰", systemImage: "iphone")
+                        .font(.system(size: 12, weight: .semibold))
+                        .padding(.horizontal, 8)
+                        .frame(height: 28)
+                        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("스마트폰 버튼 설정")
+                .help("스마트폰 버튼 설정")
                 Circle().fill(codexConnected ? .green : .gray).frame(width: 7, height: 7)
                 Circle().fill(midiConnected ? .green : .gray).frame(width: 7, height: 7)
             }

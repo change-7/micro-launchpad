@@ -1,183 +1,236 @@
 import SwiftUI
 
 struct CodexConnectionView: View {
-    enum Section: Hashable {
-        case statusMotion
+    enum Tab: String, CaseIterable, Identifiable {
+        case display
+        case motion
+        case presets
+
+        var id: Self { self }
+
+        var title: String {
+            switch self {
+            case .display: "표시 설정"
+            case .motion: "상태별 모션"
+            case .presets: "모션 프리셋"
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .display: "display"
+            case .motion: "waveform.path"
+            case .presets: "square.grid.3x3"
+            }
+        }
     }
 
-    static let visibleSections: [Section] = [.statusMotion]
+    static var availableTabTitles: [String] { Tab.allCases.map(\.title) }
 
     @Bindable var store: LaunchpadStore
     let midi: LaunchpadMIDIManager
     let codex: CodexAppServerClient
 
     @Environment(\.dismiss) private var dismiss
+    @State private var selectedTab: Tab = .display
 
     var body: some View {
-        VStack(spacing: 16) {
-            header
-            connectionCard
+        HStack(spacing: 0) {
+            settingsSidebar
+            .frame(width: 190)
+            .layoutPriority(1)
 
-            settingsContent
-            .frame(maxHeight: .infinity)
+            Divider()
 
-            Text("이 앱에서 시작한 Codex 작업만 상태·모션으로 추적합니다. 기존 ChatGPT 앱 작업은 포함되지 않습니다.")
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(spacing: 0) {
+                HStack {
+                    Text(selectedTab.title)
+                        .font(.title3.weight(.semibold))
+                    Spacer()
+                    Button("완료") { dismiss() }
+                        .keyboardShortcut(.defaultAction)
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 14)
+
+                Divider()
+
+                switch selectedTab {
+                case .display:
+                    displayPane
+                case .motion:
+                    motionRulesPane
+                case .presets:
+                    MotionPresetView(store: store, midi: midi, isEmbedded: true)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .padding(22)
-        .frame(width: 820, height: 580)
-        .background(Color(red: 0.035, green: 0.035, blue: 0.045))
+        .frame(width: 820, height: 560)
     }
 
-    private var header: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("CODEX 연결")
-                    .font(.system(size: 20, weight: .bold))
-                Text("Codex 상태를 Launchpad LED와 모션으로 표시합니다.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+    private var settingsSidebar: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Tab.allCases) { tab in
+                Button {
+                    selectedTab = tab
+                } label: {
+                    Label(tab.title, systemImage: tab.symbol)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .frame(height: 32)
+                        .background(
+                            selectedTab == tab ? Color.accentColor.opacity(0.22) : .clear,
+                            in: RoundedRectangle(cornerRadius: 7)
+                        )
+                }
+                .buttonStyle(.plain)
+                .focusEffectDisabled()
             }
             Spacer()
-            Button("닫기") { dismiss() }
-                .keyboardShortcut(.cancelAction)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(.regularMaterial)
     }
 
     private var connectionCard: some View {
-        HStack(spacing: 10) {
-            Circle().fill(statusColor).frame(width: 9, height: 9)
-            Text(codex.message)
-                .font(.system(size: 12, design: .monospaced))
-                .lineLimit(1)
-            Spacer(minLength: 12)
-            Button(codex.isConnected ? "연결 종료" : "Codex 연결") {
-                codex.isConnected ? codex.disconnect() : codex.connect()
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(codex.isConnected ? .red : .green)
-        }
-        .padding(12)
-        .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    @ViewBuilder
-    private var settingsContent: some View {
-        if Self.visibleSections.contains(.statusMotion) {
-            motionPane
-        }
-    }
-
-    private var motionPane: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("상태별 모션")
-                        .font(.system(size: 15, weight: .semibold))
-                    Text("표시 페이지와 각 상태의 모션·종료 조건을 설정합니다.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+        LabeledContent {
+            Button(codex.isConnected ? "연결 종료" : "연결") {
+                if codex.isConnected {
+                    codex.disconnect()
+                } else {
+                    codex.connect()
                 }
-                Spacer()
-                Text("MK1 팔레트")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.yellow)
+            }
+            .tint(codex.isConnected ? .red : .accentColor)
+        } label: {
+            HStack(spacing: 8) {
+                Circle().fill(statusColor).frame(width: 8, height: 8)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(codex.isConnected ? "연결됨" : "연결 안 됨")
+                    Text(codex.message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
+
+    private var displayPane: some View {
+        Form {
+            Section("Codex 연결") {
+                connectionCard
             }
 
-            motionDisplayLocation
-            launchpadLEDBubbleSetting
-            weeklyUsageDisplaySetting
-            idleScreensaverSetting
+            Section("LED 표시") {
+                motionDisplayLocation
+                weeklyUsageDisplaySetting
+            }
 
-            ScrollView {
+            Section("말풍선") {
+                launchpadLEDBubbleSetting
+            }
+
+            Section("LED 화면보호기") {
+                idleScreensaverSetting
+            }
+
+            Section {
+                Text("이 앱에서 시작한 Codex 작업만 상태·모션으로 추적합니다. 기존 ChatGPT 앱 작업은 포함되지 않습니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var motionRulesPane: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text("상태").frame(width: 74, alignment: .leading)
+                Text("모션").frame(width: 104, alignment: .leading)
+                Text("").frame(width: 58)
+                Text("종료 방식").frame(width: 108, alignment: .leading)
+                Text("조건").frame(width: 70, alignment: .leading)
+                Text("옵션").frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 14)
+            .padding(.bottom, 7)
+
+            GroupBox {
                 VStack(spacing: 0) {
-                    ForEach([CodexActivity.connecting, .running, .waitingForApproval, .completed, .failed]) { activity in
-                        CodexMotionRuleCard(
-                            store: store,
-                            midi: midi,
-                            activity: activity
-                        )
-                        if activity != .failed {
-                            Divider().overlay(.white.opacity(0.12))
+                    ForEach(Array(motionActivities.enumerated()), id: \.element.id) { index, activity in
+                        CodexMotionRuleCard(store: store, midi: midi, activity: activity)
+                        if index < motionActivities.count - 1 {
+                            Divider()
                         }
                     }
                 }
-                .padding(.horizontal, 2)
+                .padding(.horizontal, 12)
             }
         }
-        .padding(.top, 12)
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var motionActivities: [CodexActivity] {
+        [.connecting, .running, .waitingForApproval, .completed, .failed]
     }
 
     private var motionDisplayLocation: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 10) {
-                Text("상태 모션 페이지")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-
+        VStack(alignment: .leading, spacing: 8) {
+            LabeledContent("상태 모션 페이지") {
                 Picker("Codex 상태 모션 표시 페이지", selection: motionDisplayPageBinding) {
                     ForEach(Array(store.pages.enumerated()), id: \.element.id) { index, page in
                         Text("P\(index + 1) · \(page.name)").tag(page.id)
                     }
                 }
                 .labelsHidden()
-                .frame(width: 170)
-
-                Text("사용량 표시와 다른 페이지")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                Toggle("모션 중 기존 패드 LED 유지", isOn: preservesPadLEDsBinding)
-                    .font(.system(size: 11))
-                    .lineLimit(1)
-                    .toggleStyle(.switch)
-                    .accessibilityIdentifier("codex-motion-preserve-pad-leds-toggle")
-                Spacer(minLength: 0)
+                .frame(width: 180)
             }
+            Toggle("모션 재생 중에도 기존 패드 LED 유지", isOn: preservesPadLEDsBinding)
+                .accessibilityIdentifier("codex-motion-preserve-pad-leds-toggle")
         }
-        .padding(.vertical, 6)
     }
 
     private var launchpadLEDBubbleSetting: some View {
-        HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             Toggle("Launchpad LED 말풍선 표시", isOn: launchpadLEDBubbleBinding)
-                .font(.system(size: 11))
-                .toggleStyle(.switch)
                 .accessibilityIdentifier("launchpad-led-bubble-toggle")
-            Picker("Launchpad LED 말풍선 크기", selection: launchpadLEDBubbleSizeBinding) {
-                ForEach(LaunchpadLEDBubbleSize.allCases) { size in
-                    Text(size.title).tag(size)
+            LabeledContent("크기") {
+                Picker("Launchpad LED 말풍선 크기", selection: launchpadLEDBubbleSizeBinding) {
+                    ForEach(LaunchpadLEDBubbleSize.allCases) { size in
+                        Text(size.title).tag(size)
+                    }
                 }
+                .labelsHidden()
+                .frame(width: 120)
+                .accessibilityIdentifier("launchpad-led-bubble-size-picker")
             }
-            .labelsHidden()
-            .frame(width: 92)
-            .accessibilityIdentifier("launchpad-led-bubble-size-picker")
-            Text("기기에 전송한 현재 LED 배열을 그대로 표시 · 드래그로 이동")
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 0)
+            .disabled(!store.codexMotionDisplaySettings.showsLaunchpadLEDBubble)
         }
-        .padding(.vertical, 4)
     }
 
     private var idleScreensaverSetting: some View {
-        HStack(spacing: 10) {
-            Toggle("LED 화면보호기", isOn: idleScreensaverEnabledBinding)
-                .font(.system(size: 11))
-                .toggleStyle(.switch)
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("사용", isOn: idleScreensaverEnabledBinding)
                 .accessibilityIdentifier("idle-screensaver-toggle")
 
-            HStack(spacing: 10) {
+            LabeledContent("입력 기준") {
                 Picker("화면보호기 입력 기준", selection: idleScreensaverInputScopeBinding) {
                     ForEach(LaunchpadIdleInputScope.allCases) { scope in
                         Text(scope.title).tag(scope)
                     }
                 }
                 .labelsHidden()
-                .frame(width: 120)
+                .frame(width: 160)
+            }
 
+            LabeledContent("시작 및 재생 시간") {
+                HStack(spacing: 6) {
                 TextField("초", value: idleScreensaverDelayBinding, format: .number)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 58)
@@ -193,9 +246,11 @@ struct CodexConnectionView: View {
                     .multilineTextAlignment(.trailing)
                     .accessibilityLabel("화면보호기 지속 시간(초)")
                 Text("초 재생")
-                    .font(.system(size: 10))
                     .foregroundStyle(.secondary)
+                }
+            }
 
+            LabeledContent("재생 모션") {
                 Picker("화면보호기 모션", selection: idleScreensaverPresetBinding) {
                     Text("모션 선택").tag(UUID?.none)
                     ForEach(store.motionPresets) { preset in
@@ -203,50 +258,43 @@ struct CodexConnectionView: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 160)
+                .frame(width: 180)
             }
             .disabled(!store.codexMotionDisplaySettings.idleScreensaver.isEnabled)
-
-            Spacer(minLength: 0)
         }
-        .padding(.vertical, 4)
     }
 
     private var weeklyUsageDisplaySetting: some View {
-        HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             Toggle("주간 잔여량 표시", isOn: weeklyUsageEnabledBinding)
-                .font(.system(size: 11))
-                .toggleStyle(.switch)
                 .accessibilityIdentifier("weekly-usage-display-toggle")
 
-            HStack(spacing: 10) {
+            LabeledContent("표시 방식") {
                 Picker("주간 잔여량 표시 방식", selection: weeklyUsageStyleBinding) {
                     ForEach(CodexWeeklyUsageDisplayStyle.allCases) { style in
                         Text(style.title).tag(style)
                     }
                 }
                 .labelsHidden()
-                .frame(width: 105)
+                .frame(width: 140)
+            }
 
+            LabeledContent("표시 페이지") {
                 Picker("주간 잔여량 표시 페이지", selection: weeklyUsagePageBinding) {
                     ForEach(Array(store.pages.enumerated()), id: \.element.id) { index, page in
                         Text("P\(index + 1) · \(page.name)").tag(page.id)
                     }
                 }
                 .labelsHidden()
-                .frame(width: 170)
-
-                Text(store.codexMotionDisplaySettings.weeklyUsageDisplay.style == .level
-                    ? "상태 모션과 다른 페이지"
-                    : "100%=00 · 다른 페이지")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
+                .frame(width: 180)
             }
             .disabled(!store.codexMotionDisplaySettings.weeklyUsageDisplay.isEnabled)
-
-            Spacer(minLength: 0)
+            Text(store.codexMotionDisplaySettings.weeklyUsageDisplay.style == .level
+                ? "평소 사용량 표시 · 모션 종료 후 자동 복귀"
+                : "0%=0 · 100%=00 · 모션 종료 후 자동 복귀")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 4)
     }
 
     private var motionDisplayPageBinding: Binding<UUID> {

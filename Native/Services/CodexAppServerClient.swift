@@ -4,11 +4,25 @@ import Observation
 @MainActor
 @Observable
 final class CodexAppServerClient {
-    private(set) var activity: CodexActivity = .idle
-    private(set) var isConnected = false
-    private(set) var message = "Codex App Server에 연결하지 않았습니다."
-    private(set) var weeklyUsage: CodexWeeklyUsage?
+    static let usageRefreshInterval: TimeInterval = 30
 
+    private(set) var activity: CodexActivity = .idle {
+        didSet { publishRemoteState() }
+    }
+    private(set) var isConnected = false {
+        didSet { publishRemoteState() }
+    }
+    private(set) var message = "Codex App Server에 연결하지 않았습니다." {
+        didSet { publishRemoteState() }
+    }
+    private(set) var weeklyUsage: CodexWeeklyUsage? {
+        didSet { publishRemoteState() }
+    }
+    private(set) var fiveHourUsage: CodexFiveHourUsage? {
+        didSet { publishRemoteState() }
+    }
+
+    private let remoteBridge = CodexRemoteBridge()
     private var process: Process?
     private var input: FileHandle?
     private var output: Pipe?
@@ -18,6 +32,74 @@ final class CodexAppServerClient {
     private var pendingRequests: [Int: PendingRequest] = [:]
     private var activeThreadID: String?
     private var isUsingShellFallback = false
+    private var desktopActivity: CodexActivity?
+    private var pendingRemoteApproval: PendingRemoteApproval?
+    private var remoteCompletionEventID = 0
+    private var remoteActiveSessionCount = 0
+    private var usageRefreshTask: Task<Void, Never>?
+    private var remoteStateRefreshTask: Task<Void, Never>?
+    private var lastUsageRefreshAt: Date?
+    private var remoteSmartphonePagesProvider: () -> [SmartphonePage] = SmartphoneDefaults.persistedPages
+
+    private struct PendingRemoteApproval {
+        let requestID: Int
+        let title: String
+        let detail: String
+        let responseKind: ResponseKind
+        let requestedPermissions: [String: Any]?
+
+        enum ResponseKind {
+            case decision
+            case permissions
+        }
+    }
+
+    func startRemoteBridge() {
+        remoteBridge.start()
+        publishRemoteState()
+        startRemoteStateRefreshLoop()
+    }
+
+    func setRemoteCommandHandler(_ handler: @escaping (CodexRemoteCommand) -> CodexRemoteCommandResult) {
+        remoteBridge.onCommand = handler
+    }
+
+    func setRemoteSmartphonePagesProvider(_ provider: @escaping () -> [SmartphonePage]) {
+        remoteSmartphonePagesProvider = provider
+        publishRemoteState()
+    }
+
+    func stopRemoteBridge() {
+        remoteStateRefreshTask?.cancel()
+        remoteStateRefreshTask = nil
+        remoteBridge.stop()
+    }
+
+    private func startRemoteStateRefreshLoop() {
+        guard remoteStateRefreshTask == nil else { return }
+        remoteStateRefreshTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard !Task.isCancelled, let self else { return }
+                self.publishRemoteState()
+            }
+        }
+    }
+
+    func publishRemoteActivity(_ activity: CodexActivity) {
+        desktopActivity = activity == .idle ? nil : activity
+        publishRemoteState()
+    }
+
+    func publishRemoteCompletion(taskID: DesktopCodexTaskID) {
+        remoteCompletionEventID += 1
+        publishRemoteState()
+    }
+
+    func publishRemoteSessionCount(_ count: Int) {
+        remoteActiveSessionCount = max(0, count)
+        publishRemoteState()
+    }
 
     func connect() {
         guard process == nil else { return }
@@ -103,6 +185,7 @@ final class CodexAppServerClient {
             return
         }
 
+        desktopActivity = nil
         activity = .running
         message = "Codex 작업을 시작하는 중…"
         if let activeThreadID {
@@ -125,7 +208,21 @@ final class CodexAppServerClient {
                   if case .weeklyUsage = request { return true }
                   return false
               }) else { return }
+        lastUsageRefreshAt = Date()
         sendRequest(method: "account/rateLimits/read", params: [:], kind: .weeklyUsage)
+    }
+
+    private func startUsageRefreshLoop() {
+        guard usageRefreshTask == nil else { return }
+        usageRefreshTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(Self.usageRefreshInterval * 1_000_000_000))
+                guard !Task.isCancelled, let self else { return }
+                guard self.isConnected,
+                      Self.shouldRefreshUsage(lastRefreshAt: self.lastUsageRefreshAt, now: Date()) else { continue }
+                self.refreshWeeklyUsage()
+            }
+        }
     }
 
     private func startTurn(threadID: String, prompt: String, workingDirectory: String) {
@@ -177,9 +274,44 @@ final class CodexAppServerClient {
                 activity = .idle
                 message = "Codex App Server 연결됨"
                 refreshWeeklyUsage()
+                startUsageRefreshLoop()
+                return
+            }
+            if let requestID = object["id"] as? Int,
+               Self.isRemoteApprovalRequest(method) {
+                let params = object["params"] as? [String: Any] ?? [:]
+                pendingRemoteApproval = PendingRemoteApproval(
+                    requestID: requestID,
+                    title: Self.remoteApprovalTitle(for: method),
+                    detail: Self.remoteApprovalDetail(from: params),
+                    responseKind: method.lowercased().contains("permissions") ? .permissions : .decision,
+                    requestedPermissions: params["permissions"] as? [String: Any]
+                )
+                if Self.shouldResetDesktopActivity(for: .waitingForApproval, desktopActivity: desktopActivity) {
+                    desktopActivity = nil
+                }
+                activity = .waitingForApproval
+                message = "Codex 승인을 기다리는 중"
+                return
+            }
+            if method == "serverRequest/resolved" {
+                if let params = object["params"] as? [String: Any],
+                   let requestID = params["requestId"] as? Int,
+                   pendingRemoteApproval?.requestID == requestID {
+                    pendingRemoteApproval = nil
+                }
                 return
             }
             if let eventActivity = CodexEventReducer.activity(for: method) {
+                if eventActivity != .waitingForApproval {
+                    pendingRemoteApproval = nil
+                }
+                if Self.shouldResetDesktopActivity(for: eventActivity, desktopActivity: desktopActivity) {
+                    // A new App Server turn supersedes the previous desktop completion.
+                    // Without clearing this terminal value, the remote bridge can keep
+                    // reporting COMPLETED until the transcript monitor catches up.
+                    desktopActivity = nil
+                }
                 activity = eventActivity
                 message = "Codex: \(eventActivity.title)"
             }
@@ -191,6 +323,7 @@ final class CodexAppServerClient {
         if let error = object["error"] as? [String: Any] {
             if case .weeklyUsage = request {
                 weeklyUsage = nil
+                fiveHourUsage = nil
                 return
             }
             activity = .failed
@@ -205,6 +338,7 @@ final class CodexAppServerClient {
             activity = .idle
             message = "Codex App Server 연결됨"
             refreshWeeklyUsage()
+            startUsageRefreshLoop()
         case let .threadStart(prompt, workingDirectory):
             guard let result = object["result"] as? [String: Any],
                   let thread = result["thread"] as? [String: Any],
@@ -216,11 +350,43 @@ final class CodexAppServerClient {
             activeThreadID = threadID
             startTurn(threadID: threadID, prompt: prompt, workingDirectory: workingDirectory)
         case .turnStart:
+            desktopActivity = nil
             activity = .running
             message = "Codex 작업 중"
         case .weeklyUsage:
-            weeklyUsage = Self.weeklyUsage(from: object["result"] as? [String: Any])
+            let usage = Self.usage(from: object["result"] as? [String: Any])
+            fiveHourUsage = usage.fiveHour
+            weeklyUsage = usage.weekly
         }
+    }
+
+    func respondToRemoteApproval(decision: String) -> (success: Bool, message: String) {
+        let normalizedDecision = decision.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard ["accept", "acceptForSession", "decline", "cancel"].contains(normalizedDecision) else {
+            return (false, "지원하지 않는 승인 응답입니다.")
+        }
+        guard isConnected, let pendingApproval = pendingRemoteApproval else {
+            return (false, "현재 대기 중인 Codex 승인 요청이 없습니다.")
+        }
+
+        pendingRemoteApproval = nil
+        let result: [String: Any]
+        switch pendingApproval.responseKind {
+        case .decision:
+            result = ["decision": normalizedDecision]
+        case .permissions:
+            let approved = normalizedDecision == "accept" || normalizedDecision == "acceptForSession"
+            result = [
+                "scope": normalizedDecision == "acceptForSession" ? "session" : "turn",
+                "permissions": approved ? (pendingApproval.requestedPermissions ?? [:]) : [:]
+            ]
+        }
+        write(["id": pendingApproval.requestID, "result": result])
+        activity = .running
+        message = normalizedDecision == "accept" || normalizedDecision == "acceptForSession"
+            ? "Codex 승인을 전송했습니다."
+            : "Codex 거부를 전송했습니다."
+        return (true, message)
     }
 
     private func consumeDiagnostic(_ text: String) {
@@ -248,6 +414,9 @@ final class CodexAppServerClient {
     }
 
     private func cleanUpProcess() {
+        usageRefreshTask?.cancel()
+        usageRefreshTask = nil
+        lastUsageRefreshAt = nil
         output?.fileHandleForReading.readabilityHandler = nil
         errorOutput?.fileHandleForReading.readabilityHandler = nil
         if let process, process.isRunning { process.terminate() }
@@ -258,12 +427,106 @@ final class CodexAppServerClient {
         pendingOutput.removeAll(keepingCapacity: false)
         pendingRequests.removeAll(keepingCapacity: false)
         activeThreadID = nil
+        pendingRemoteApproval = nil
         isUsingShellFallback = false
         weeklyUsage = nil
+        fiveHourUsage = nil
+    }
+
+    private static func isRemoteApprovalRequest(_ method: String) -> Bool {
+        let normalized = method.lowercased()
+        return normalized.contains("requestapproval") || normalized.contains("confirmation")
+    }
+
+    private static func remoteApprovalTitle(for method: String) -> String {
+        let normalized = method.lowercased()
+        if normalized.contains("filechange") {
+            return "파일 변경 승인 필요"
+        }
+        if normalized.contains("permission") {
+            return "권한 승인 필요"
+        }
+        return "Codex 승인 필요"
+    }
+
+    private static func remoteApprovalDetail(from params: [String: Any]) -> String {
+        var parts = [String]()
+        if let reason = params["reason"] as? String, !reason.isEmpty {
+            parts.append(reason)
+        }
+        if let command = params["command"] as? String, !command.isEmpty {
+            parts.append(command)
+        }
+        if let cwd = params["cwd"] as? String, !cwd.isEmpty {
+            parts.append("위치: \(cwd)")
+        }
+        return parts.isEmpty ? "Codex가 계속 진행하려면 확인이 필요합니다." : parts.joined(separator: "\n")
+    }
+
+    func publishRemoteState() {
+        let smartphonePages = remoteSmartphonePagesProvider()
+        let remoteActivity = desktopActivity ?? activity
+        let remoteMessage = Self.remoteMessage(
+            for: remoteActivity,
+            activeSessionCount: remoteActiveSessionCount,
+            fallbackMessage: message
+        )
+        remoteBridge.publish(
+            CodexRemoteState(
+                macConnected: true,
+                codexConnected: isConnected,
+                activity: remoteActivity,
+                message: remoteMessage,
+                weeklyUsage: weeklyUsage,
+                fiveHourUsage: fiveHourUsage,
+                smartphonePages: smartphonePages,
+                smartphoneIconAssets: SmartphoneIconAssetProvider.assets(for: smartphonePages),
+                approval: pendingRemoteApproval.map {
+                    CodexRemoteApproval(requestID: $0.requestID, title: $0.title, detail: $0.detail)
+                },
+                completionEventID: remoteCompletionEventID,
+                activeSessionCount: remoteActiveSessionCount
+            )
+        )
+    }
+
+    static func remoteMessage(
+        for activity: CodexActivity,
+        activeSessionCount: Int,
+        fallbackMessage: String
+    ) -> String {
+        switch activity {
+        case .connecting: "Codex App Server를 시작하는 중…"
+        case .running:
+            activeSessionCount > 1 ? "\(activeSessionCount)개 작업 중" : "Codex 작업 중"
+        case .waitingForApproval:
+            activeSessionCount > 1 ? "\(activeSessionCount)개 작업 중 · 승인 대기" : "Codex 승인을 기다리는 중"
+        case .completed: "Codex 작업 완료"
+        case .failed, .idle: fallbackMessage
+        }
     }
 
     static func weeklyUsage(from result: [String: Any]?) -> CodexWeeklyUsage? {
-        guard let result else { return nil }
+        usage(from: result).weekly
+    }
+
+    static func shouldRefreshUsage(lastRefreshAt: Date?, now: Date, interval: TimeInterval = usageRefreshInterval) -> Bool {
+        guard let lastRefreshAt else { return true }
+        return now.timeIntervalSince(lastRefreshAt) >= interval
+    }
+
+    static func shouldResetDesktopActivity(for appServerActivity: CodexActivity, desktopActivity: CodexActivity?) -> Bool {
+        guard desktopActivity == .completed else { return false }
+        switch appServerActivity {
+        case .connecting, .running, .waitingForApproval:
+            return true
+        case .idle, .completed, .failed:
+            return false
+        }
+    }
+
+    static func usage(from result: [String: Any]?) -> (fiveHour: CodexFiveHourUsage?, weekly: CodexWeeklyUsage?) {
+        guard let result else { return (fiveHour: nil, weekly: nil) }
         var candidates = [[String: Any]]()
         if let rateLimits = result["rateLimits"] as? [String: Any] {
             candidates.append(rateLimits)
@@ -271,16 +534,23 @@ final class CodexAppServerClient {
         if let rateLimitsByLimitID = result["rateLimitsByLimitId"] as? [String: [String: Any]] {
             candidates.append(contentsOf: rateLimitsByLimitID.values)
         }
+        var fiveHour: CodexFiveHourUsage?
+        var weekly: CodexWeeklyUsage?
         for limit in candidates {
             for windowKey in ["primary", "secondary"] {
                 guard let window = limit[windowKey] as? [String: Any],
-                      let duration = number(window["windowDurationMins"]), duration == 10_080,
+                      let duration = number(window["windowDurationMins"]),
                       let usedPercent = number(window["usedPercent"]) else { continue }
                 let resetsAt = number(window["resetsAt"]).map { Date(timeIntervalSince1970: $0) }
-                return CodexWeeklyUsage(usedPercent: Int(usedPercent.rounded()), resetsAt: resetsAt)
+                let roundedUsedPercent = Int(usedPercent.rounded())
+                if duration == 300 {
+                    fiveHour = CodexFiveHourUsage(usedPercent: roundedUsedPercent, resetsAt: resetsAt)
+                } else if duration == 10_080 {
+                    weekly = CodexWeeklyUsage(usedPercent: roundedUsedPercent, resetsAt: resetsAt)
+                }
             }
         }
-        return nil
+        return (fiveHour: fiveHour, weekly: weekly)
     }
 
     private static func number(_ value: Any?) -> TimeInterval? {

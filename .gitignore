@@ -1,4 +1,11 @@
 .build/
 /.omo/
 /마이크로 런치패드.app/
+Android/.gradle/
+Android/.gradle-home/
+Android/.kotlin/
+Android/app/build/
+.gradle/
+.kotlin/
+.DS_Store
 .DS_Store

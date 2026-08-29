@@ -37,6 +37,18 @@ struct PadAction: Codable, Hashable {
         self.launchTargetAppIfNeeded = launchTargetAppIfNeeded
     }
 
+    /// Repairs the value left by the old action-kind switcher when an app
+    /// bundle ID was retained as the shortcut value.
+    var repairedForPersistence: PadAction {
+        guard kind == .shortcut,
+              !targetAppBundleIdentifier.isEmpty,
+              value == targetAppBundleIdentifier,
+              value.contains(".") else { return self }
+        var repaired = self
+        repaired.value = ""
+        return repaired
+    }
+
     private enum CodingKeys: String, CodingKey {
         case kind, value, targetAppBundleIdentifier, launchTargetAppIfNeeded
     }
@@ -65,6 +77,30 @@ struct Pad: Identifiable, Codable, Hashable {
     var idleColor = "off"
     var activeColor = "green"
     var action = PadAction()
+
+    func configuration(at id: String) -> Pad {
+        Pad(
+            id: id,
+            title: title,
+            symbol: symbol,
+            idleColor: idleColor,
+            activeColor: activeColor,
+            action: action
+        )
+    }
+}
+
+struct SmartphoneButton: Identifiable, Codable, Hashable {
+    let id: String
+    var title = ""
+    var symbol = "square.grid.2x2"
+    var action = PadAction()
+}
+
+struct SmartphonePage: Identifiable, Codable, Hashable {
+    let id: String
+    var name: String
+    var buttons: [SmartphoneButton]
 }
 
 struct LaunchPage: Identifiable, Codable, Hashable {
@@ -85,6 +121,29 @@ struct LaunchPage: Identifiable, Codable, Hashable {
     /// The top P button uses its selected-page color only while this page is active.
     func topButtonColor(isSelected: Bool) -> String {
         isSelected ? pageActiveColor : pageIdleColor
+    }
+
+    mutating func swapGridPadConfigurations(from sourceID: String, to destinationID: String) -> Bool {
+        guard sourceID != destinationID,
+              sourceID.hasPrefix("grid_"),
+              destinationID.hasPrefix("grid_"),
+              let sourceIndex = pads.firstIndex(where: { $0.id == sourceID }),
+              let destinationIndex = pads.firstIndex(where: { $0.id == destinationID }) else {
+            return false
+        }
+
+        let source = pads[sourceIndex]
+        let destination = pads[destinationIndex]
+        pads[sourceIndex] = destination.configuration(at: sourceID)
+        pads[destinationIndex] = source.configuration(at: destinationID)
+        return true
+    }
+
+    mutating func clearGridPadConfiguration(_ padID: String) -> Bool {
+        guard padID.hasPrefix("grid_"),
+              let index = pads.firstIndex(where: { $0.id == padID }) else { return false }
+        pads[index] = Pad(id: padID)
+        return true
     }
 
     private enum CodingKeys: String, CodingKey {

@@ -3,6 +3,7 @@ import Observation
 
 @Observable
 final class LaunchpadStore {
+    private let preferences = UserDefaults(suiteName: "com.pdg.chatgpt-micro-launchpad.native") ?? .standard
     private let storageKey = "chatgpt-micro-launchpad.pages"
     private let motionStorageKey = "chatgpt-micro-launchpad.motion-presets"
     private let codexMotionStorageKey = "chatgpt-micro-launchpad.codex-motion-bindings"
@@ -12,6 +13,7 @@ final class LaunchpadStore {
     private let sideButtonCategoryOrderMigrationKey = "chatgpt-micro-launchpad.side-button-category-order-v3"
     private let sortedSideButtonDefaultsMigrationKey = "chatgpt-micro-launchpad.sorted-side-button-defaults-v4"
     var pages: [LaunchPage]
+    var smartphonePages: [SmartphonePage]
     var motionPresets: [MotionPreset]
     var codexMotionPresetIDs: [String: UUID]
     var codexMotionPresentations: [String: CodexMotionPresentation]
@@ -21,11 +23,11 @@ final class LaunchpadStore {
     var statusMessage = "패드를 선택해 설정하세요."
 
     init() {
-        let needsSideButtonMigration = !UserDefaults.standard.bool(forKey: sideButtonDefaultsMigrationKey)
-        let needsSideButtonCategoryOrdering = !UserDefaults.standard.bool(forKey: sideButtonCategoryOrderMigrationKey)
-        let needsSortedSideButtonDefaults = !UserDefaults.standard.bool(forKey: sortedSideButtonDefaultsMigrationKey)
+        let needsSideButtonMigration = !preferences.bool(forKey: sideButtonDefaultsMigrationKey)
+        let needsSideButtonCategoryOrdering = !preferences.bool(forKey: sideButtonCategoryOrderMigrationKey)
+        let needsSortedSideButtonDefaults = !preferences.bool(forKey: sortedSideButtonDefaultsMigrationKey)
         var loadedPages: [LaunchPage]
-        if let data = UserDefaults.standard.data(forKey: storageKey), let savedPages = try? JSONDecoder().decode([LaunchPage].self, from: data), savedPages.count == 8 {
+        if let data = preferences.data(forKey: storageKey), let savedPages = try? JSONDecoder().decode([LaunchPage].self, from: data), savedPages.count == 8 {
             loadedPages = savedPages.map(PadDefaults.normalized)
         } else {
             loadedPages = PadDefaults.pages()
@@ -43,13 +45,14 @@ final class LaunchpadStore {
         let didSynchronizeCommonSideButtons = commonSideButtonPages != loadedPages
         loadedPages = commonSideButtonPages
         pages = loadedPages
-        motionPresets = (try? UserDefaults.standard.data(forKey: motionStorageKey)
+        smartphonePages = SmartphoneDefaults.persistedPages(from: preferences)
+        motionPresets = (try? preferences.data(forKey: motionStorageKey)
             .flatMap { try JSONDecoder().decode([MotionPreset].self, from: $0) }) ?? []
-        let savedPresetIDs = (try? UserDefaults.standard.data(forKey: codexMotionStorageKey)
+        let savedPresetIDs = (try? preferences.data(forKey: codexMotionStorageKey)
             .flatMap { try JSONDecoder().decode([String: UUID].self, from: $0) }) ?? [:]
         codexMotionPresetIDs = savedPresetIDs
         let loadedPresentations: [String: CodexMotionPresentation]
-        if let data = UserDefaults.standard.data(forKey: codexMotionPresentationStorageKey),
+        if let data = preferences.data(forKey: codexMotionPresentationStorageKey),
            let saved = try? JSONDecoder().decode([String: CodexMotionPresentation].self, from: data) {
             loadedPresentations = saved
         } else {
@@ -59,34 +62,32 @@ final class LaunchpadStore {
         }
         codexMotionPresentations = loadedPresentations
         let restoredDisplaySettings = CodexMotionDisplaySettings.restored(
-            from: UserDefaults.standard.data(forKey: codexMotionDisplaySettingsStorageKey),
+            from: preferences.data(forKey: codexMotionDisplaySettingsStorageKey),
             legacyPresentations: loadedPresentations
         )
         codexMotionDisplaySettings = restoredDisplaySettings.settings
-        let didSeparateCodexDisplayPages = enforceSeparateCodexDisplayPages()
         if needsSideButtonMigration
             || needsSideButtonCategoryOrdering
             || needsSortedSideButtonDefaults
             || didSynchronizeCommonSideButtons {
             if needsSideButtonMigration {
-                UserDefaults.standard.set(true, forKey: sideButtonDefaultsMigrationKey)
+                preferences.set(true, forKey: sideButtonDefaultsMigrationKey)
             }
             if needsSideButtonCategoryOrdering {
-                UserDefaults.standard.set(true, forKey: sideButtonCategoryOrderMigrationKey)
+                preferences.set(true, forKey: sideButtonCategoryOrderMigrationKey)
             }
             if needsSortedSideButtonDefaults {
-                UserDefaults.standard.set(true, forKey: sortedSideButtonDefaultsMigrationKey)
+                preferences.set(true, forKey: sortedSideButtonDefaultsMigrationKey)
             }
             save()
         }
-        if restoredDisplaySettings.didMigrateLegacyPreservation || didSeparateCodexDisplayPages {
+        if restoredDisplaySettings.didMigrateLegacyPreservation {
             saveCodexMotionDisplaySettings()
         }
     }
 
     var currentPage: LaunchPage { pages[selectedPage] }
     var selectedPad: Pad? { currentPage.pads.first { $0.id == selectedPadID } }
-
     func selectPage(_ index: Int) {
         selectedPage = index
         selectedPadID = "grid_0_0"
@@ -101,6 +102,55 @@ final class LaunchpadStore {
         guard let index = pages[selectedPage].pads.firstIndex(where: { $0.id == pad.id }) else { return }
         pages[selectedPage].pads[index] = pad
         save()
+    }
+
+    func updateSmartphoneButton(_ button: SmartphoneButton, at pageIndex: Int) {
+        guard smartphonePages.indices.contains(pageIndex),
+              let buttonIndex = smartphonePages[pageIndex].buttons.firstIndex(where: { $0.id == button.id }) else { return }
+        smartphonePages[pageIndex].buttons[buttonIndex] = button
+        saveSmartphonePages()
+    }
+
+    func updateSmartphonePageName(_ name: String, at pageIndex: Int) {
+        guard smartphonePages.indices.contains(pageIndex) else { return }
+        smartphonePages[pageIndex].name = name
+        saveSmartphonePages()
+    }
+
+    func resetSmartphoneButton(pageIndex: Int, buttonIndex: Int) {
+        guard smartphonePages.indices.contains(pageIndex),
+              smartphonePages[pageIndex].buttons.indices.contains(buttonIndex) else { return }
+        smartphonePages[pageIndex].buttons[buttonIndex] = SmartphoneDefaults.defaultButton(
+            pageIndex: pageIndex,
+            buttonIndex: buttonIndex
+        )
+        saveSmartphonePages()
+    }
+
+    @discardableResult
+    func swapGridPadConfigurations(from sourceID: String, to destinationID: String) -> Bool {
+        guard pages.indices.contains(selectedPage),
+              pages[selectedPage].swapGridPadConfigurations(from: sourceID, to: destinationID) else {
+            return false
+        }
+
+        if selectedPadID == sourceID {
+            selectedPadID = destinationID
+        } else if selectedPadID == destinationID {
+            selectedPadID = sourceID
+        }
+        statusMessage = "버튼 위치를 변경했습니다."
+        save()
+        return true
+    }
+
+    @discardableResult
+    func clearGridPadConfiguration(_ padID: String) -> Bool {
+        guard pages.indices.contains(selectedPage),
+              pages[selectedPage].clearGridPadConfiguration(padID) else { return false }
+        statusMessage = "버튼 설정을 삭제했습니다."
+        save()
+        return true
     }
 
     func updatePageColor(_ color: String, selected: Bool, at index: Int) {
@@ -125,12 +175,16 @@ final class LaunchpadStore {
 
     func save() {
         guard let data = try? JSONEncoder().encode(pages) else { return }
-        UserDefaults.standard.set(data, forKey: storageKey)
+        preferences.set(data, forKey: storageKey)
+    }
+
+    private func saveSmartphonePages() {
+        SmartphoneDefaults.persist(smartphonePages, to: preferences)
     }
 
     func saveMotionPresets() {
         guard let data = try? JSONEncoder().encode(motionPresets) else { return }
-        UserDefaults.standard.set(data, forKey: motionStorageKey)
+        preferences.set(data, forKey: motionStorageKey)
     }
 
     func addMotionPreset(_ preset: MotionPreset) {
@@ -154,6 +208,16 @@ final class LaunchpadStore {
         saveMotionPresets()
         saveCodexMotionBindings()
         saveCodexMotionPresentations()
+    }
+
+    @discardableResult
+    func renameMotionPreset(id: UUID, to name: String) -> Bool {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty,
+              let index = motionPresets.firstIndex(where: { $0.id == id }) else { return false }
+        motionPresets[index].name = trimmedName
+        saveMotionPresets()
+        return true
     }
 
     func codexMotionPresetID(for activity: CodexActivity) -> UUID? {
@@ -189,14 +253,12 @@ final class LaunchpadStore {
 
     func setCodexMotionDisplayScope(_: CodexMotionDisplayScope) {
         codexMotionDisplaySettings.scope = .specificPage
-        enforceSeparateCodexDisplayPages()
         saveCodexMotionDisplaySettings()
     }
 
     func setCodexMotionDisplayPageID(_ pageID: UUID) {
         codexMotionDisplaySettings.pageID = pageID
         codexMotionDisplaySettings.scope = .specificPage
-        enforceSeparateCodexDisplayPages()
         saveCodexMotionDisplaySettings()
     }
 
@@ -259,14 +321,12 @@ final class LaunchpadStore {
 
     func setWeeklyUsageDisplayScope(_: CodexMotionDisplayScope) {
         codexMotionDisplaySettings.weeklyUsageDisplay.scope = .specificPage
-        enforceSeparateCodexDisplayPages()
         saveCodexMotionDisplaySettings()
     }
 
     func setWeeklyUsageDisplayPageID(_ pageID: UUID) {
         codexMotionDisplaySettings.weeklyUsageDisplay.pageID = pageID
         codexMotionDisplaySettings.weeklyUsageDisplay.scope = .specificPage
-        enforceSeparateCodexDisplayPages()
         saveCodexMotionDisplaySettings()
     }
 
@@ -288,33 +348,18 @@ final class LaunchpadStore {
         codexMotionDisplaySettings.allowsPresentation(on: page.id)
     }
 
-    @discardableResult
-    private func enforceSeparateCodexDisplayPages() -> Bool {
-        let previousSettings = codexMotionDisplaySettings
-        let assignment = CodexDisplayPageAssignment.separate(
-            motionPageID: codexMotionDisplaySettings.pageID,
-            weeklyUsagePageID: codexMotionDisplaySettings.weeklyUsageDisplay.pageID,
-            availablePageIDs: pages.map(\.id)
-        )
-        codexMotionDisplaySettings.scope = .specificPage
-        codexMotionDisplaySettings.pageID = assignment.motionPageID
-        codexMotionDisplaySettings.weeklyUsageDisplay.scope = .specificPage
-        codexMotionDisplaySettings.weeklyUsageDisplay.pageID = assignment.weeklyUsagePageID
-        return codexMotionDisplaySettings != previousSettings
-    }
-
     private func saveCodexMotionBindings() {
         guard let data = try? JSONEncoder().encode(codexMotionPresetIDs) else { return }
-        UserDefaults.standard.set(data, forKey: codexMotionStorageKey)
+        preferences.set(data, forKey: codexMotionStorageKey)
     }
 
     private func saveCodexMotionPresentations() {
         guard let data = try? JSONEncoder().encode(codexMotionPresentations) else { return }
-        UserDefaults.standard.set(data, forKey: codexMotionPresentationStorageKey)
+        preferences.set(data, forKey: codexMotionPresentationStorageKey)
     }
 
     private func saveCodexMotionDisplaySettings() {
         guard let data = try? JSONEncoder().encode(codexMotionDisplaySettings) else { return }
-        UserDefaults.standard.set(data, forKey: codexMotionDisplaySettingsStorageKey)
+        preferences.set(data, forKey: codexMotionDisplaySettingsStorageKey)
     }
 }

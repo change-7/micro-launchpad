@@ -57,7 +57,7 @@ final class DesktopCodexTaskMonitorTests: XCTestCase {
     }
 
     @MainActor
-    func testMonitor_whenInitialDiscoveryStartsAtEOF_publishesCompletionWithoutLocallyObservedStart() async throws {
+    func testMonitor_whenTaskIsAlreadyRunningAtStartup_restoresStartAndThenPublishesCompletion() async throws {
         // Given
         let fixture = try MonitorFixture()
         let transcript = try fixture.writeTranscript(
@@ -81,7 +81,7 @@ final class DesktopCodexTaskMonitorTests: XCTestCase {
 
         // Then
         let taskID = DesktopCodexTaskID(transcriptID: "2026/08/01/in-flight.jsonl", turnID: "in-flight")
-        XCTAssertEqual(events, [.completed(taskID)])
+        XCTAssertEqual(events, [.started(taskID), .completed(taskID)])
         XCTAssertEqual(coordinator.activity, .completed)
     }
 

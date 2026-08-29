@@ -6,56 +6,55 @@ struct CodexMotionRuleCard: View {
     let activity: CodexActivity
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 9) {
+        HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Image(systemName: symbol)
                     .foregroundStyle(color)
-                    .frame(width: 18)
+                    .frame(width: 17)
                 Text(activity.title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(width: 58, alignment: .leading)
-
-                Picker("\(activity.title) 모션", selection: presetBinding) {
-                    Text("모션 없음").tag(UUID?.none)
-                    ForEach(store.motionPresets) { preset in
-                        Text(preset.name).tag(Optional(preset.id))
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 130)
-
-                Text("종료")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                Picker("\(activity.title) 종료 방식", selection: dismissalBinding) {
-                    ForEach(CodexMotionDismissal.allCases) { dismissal in
-                        Text(dismissal.title).tag(dismissal)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 122)
-
-                dismissalDetail
-                    .frame(width: 150, alignment: .leading)
-
-                if CodexMotionRuleLayout.holdTogglePlacement(for: activity) == .mainRuleRow {
-                    Toggle("계속 표시", isOn: keepsRunningBinding)
-                        .font(.system(size: 10))
-                        .lineLimit(1)
-                        .toggleStyle(.switch)
-                        .frame(width: 120)
-                        .accessibilityLabel("작업이 끝날 때까지 계속 표시")
-                        .accessibilityIdentifier("codex-motion-running-hold-toggle")
-                }
-
-                Spacer(minLength: 0)
-                Button("미리보기") { preview() }
-                    .font(.system(size: 10, weight: .medium))
-                    .disabled(store.codexMotionPreset(for: activity) == nil)
+                    .font(.system(size: 11, weight: .semibold))
+                    .lineLimit(1)
             }
+            .frame(width: 74, alignment: .leading)
 
+            Picker("\(activity.title) 모션", selection: presetBinding) {
+                Text("모션 없음").tag(UUID?.none)
+                ForEach(store.motionPresets) { preset in
+                    Text(preset.name).tag(Optional(preset.id))
+                }
+            }
+            .labelsHidden()
+            .frame(width: 104)
+
+            Button("미리보기") { preview() }
+                .font(.system(size: 10, weight: .medium))
+                .frame(width: 58)
+                .disabled(selectedPresetExists == false)
+
+            Picker("\(activity.title) 종료 방식", selection: dismissalBinding) {
+                ForEach(CodexMotionDismissal.allCases) { dismissal in
+                    Text(dismissal.title).tag(dismissal)
+                }
+            }
+            .labelsHidden()
+            .frame(width: 108)
+
+            dismissalDetail
+                .frame(width: 70, alignment: .leading)
+
+            if CodexMotionRuleLayout.holdTogglePlacement(for: activity) == .mainRuleRow {
+                Toggle("계속 표시", isOn: keepsRunningBinding)
+                    .font(.system(size: 10))
+                    .lineLimit(1)
+                    .toggleStyle(.switch)
+                    .fixedSize()
+                    .accessibilityLabel("작업이 끝날 때까지 계속 표시")
+                    .accessibilityIdentifier("codex-motion-running-hold-toggle")
+            } else {
+                Spacer(minLength: 0)
+            }
         }
-        .padding(.vertical, 6)
+        .frame(height: 50)
     }
 
     private var presentation: CodexMotionPresentation { store.codexMotionPresentation(for: activity) }
@@ -153,6 +152,8 @@ struct CodexMotionRuleCard: View {
             midi?.stopMotion(ifCurrent: sessionID)
         }
     }
+
+    private var selectedPresetExists: Bool { store.codexMotionPreset(for: activity) != nil }
 
     private var symbol: String {
         switch activity {

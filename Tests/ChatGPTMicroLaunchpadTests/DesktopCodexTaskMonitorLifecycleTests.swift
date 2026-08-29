@@ -200,7 +200,7 @@ extension DesktopCodexTaskMonitorTests {
     }
 
     @MainActor
-    func testMonitor_whenFileIsCreatedInsideInitialDiscovery_treatsItAsPreexistingAtAdmissionBoundary() async throws {
+    func testMonitor_whenFileIsCreatedInsideInitialDiscovery_restoresItsActiveTask() async throws {
         // Given
         let fixture = try MonitorFixture()
         let admitted = fixture.root.appendingPathComponent("2026/08/01/admitted.jsonl")
@@ -229,6 +229,7 @@ extension DesktopCodexTaskMonitorTests {
 
         // Then
         XCTAssertEqual(events, [
+            .started(DesktopCodexTaskID(transcriptID: "2026/08/01/admitted.jsonl", turnID: "admitted-history")),
             .started(DesktopCodexTaskID(transcriptID: "2026/08/01/later.jsonl", turnID: "later-live"))
         ])
     }

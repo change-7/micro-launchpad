@@ -90,6 +90,46 @@ final class CodexActivityIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testMultipleDesktopSessions_whenOneCompletes_emitsCompletionAttentionWhileAnotherRuns() async throws {
+        // Given
+        let fixture = try MonitorFixture()
+        let controller = makeController(fixture: fixture)
+        var completionCount = 0
+        controller.onTaskCompletion = { @MainActor _ in completionCount += 1 }
+        controller.startDesktopMonitoring()
+        await fixture.waitForMonitorToBecomeIdle()
+        let first = try fixture.writeTranscript(
+            relativePath: "2026/08/01/session-one.jsonl",
+            contents: userMetadata + taskStarted(turnID: "one")
+        )
+        let second = try fixture.writeTranscript(
+            relativePath: "2026/08/01/session-two.jsonl",
+            contents: userMetadata + taskStarted(turnID: "two")
+        )
+        fixture.scheduler.fire()
+        await fixture.waitForMonitorToBecomeIdle()
+        XCTAssertEqual(controller.activeSessionCount, 2)
+
+        // When only the first session completes
+        try fixture.append(taskCompleted(turnID: "one"), to: first)
+        fixture.scheduler.fire()
+        await fixture.waitForMonitorToBecomeIdle()
+
+        // Then
+        XCTAssertEqual(controller.activity, .running)
+        XCTAssertEqual(controller.activeSessionCount, 1)
+        XCTAssertEqual(completionCount, 1)
+
+        // And the second session can complete independently
+        try fixture.append(taskCompleted(turnID: "two"), to: second)
+        fixture.scheduler.fire()
+        await fixture.waitForMonitorToBecomeIdle()
+        XCTAssertEqual(completionCount, 2)
+        XCTAssertEqual(controller.activeSessionCount, 0)
+        XCTAssertEqual(controller.activity, .completed)
+    }
+
+    @MainActor
     func testCoordinator_whenDesktopTerminatesAndAppServerStatusIsStale_publishesDesktopCompletion() async throws {
         // Given
         let fixture = try MonitorFixture()

@@ -3,6 +3,46 @@ import XCTest
 
 @MainActor
 final class CodexAppServerLaunchLifecycleTests: XCTestCase {
+    func testRemoteActivity_whenNewTurnArrives_clearsPreviousDesktopCompletion() {
+        XCTAssertTrue(
+            CodexAppServerClient.shouldResetDesktopActivity(
+                for: .running,
+                desktopActivity: .completed
+            )
+        )
+        XCTAssertTrue(
+            CodexAppServerClient.shouldResetDesktopActivity(
+                for: .waitingForApproval,
+                desktopActivity: .completed
+            )
+        )
+        XCTAssertFalse(
+            CodexAppServerClient.shouldResetDesktopActivity(
+                for: .idle,
+                desktopActivity: .completed
+            )
+        )
+    }
+
+    func testRemoteMessage_whenMultipleSessionsAreRunning_includesTheActiveCount() {
+        XCTAssertEqual(
+            CodexAppServerClient.remoteMessage(
+                for: .running,
+                activeSessionCount: 2,
+                fallbackMessage: "fallback"
+            ),
+            "2개 작업 중"
+        )
+        XCTAssertEqual(
+            CodexAppServerClient.remoteMessage(
+                for: .waitingForApproval,
+                activeSessionCount: 3,
+                fallbackMessage: "fallback"
+            ),
+            "3개 작업 중 · 승인 대기"
+        )
+    }
+
     func testWeeklyUsage_whenWeeklyLimitIsSecondary_readsExactlyTheSevenDayWindow() {
         let result: [String: Any] = [
             "rateLimits": [
@@ -25,6 +65,39 @@ final class CodexAppServerLaunchLifecycleTests: XCTestCase {
         ]
 
         XCTAssertNil(CodexAppServerClient.weeklyUsage(from: result))
+    }
+
+    func testUsage_whenFiveHourAndWeeklyWindowsExist_returnsBothWindows() {
+        let result: [String: Any] = [
+            "rateLimits": [
+                "primary": ["windowDurationMins": 300, "usedPercent": 16, "resetsAt": 1_786_161_000],
+                "secondary": ["windowDurationMins": 10_080, "usedPercent": 22, "resetsAt": 1_786_161_493]
+            ]
+        ]
+
+        let usage = CodexAppServerClient.usage(from: result)
+
+        XCTAssertEqual(usage.fiveHour?.usedPercent, 16)
+        XCTAssertEqual(usage.fiveHour?.resetsAt?.timeIntervalSince1970, 1_786_161_000)
+        XCTAssertEqual(usage.weekly?.usedPercent, 22)
+        XCTAssertEqual(usage.weekly?.resetsAt?.timeIntervalSince1970, 1_786_161_493)
+    }
+
+    func testUsageRefresh_whenLastRefreshIsOlderThanInterval_isDue() {
+        let now = Date(timeIntervalSince1970: 1_000)
+
+        XCTAssertTrue(
+            CodexAppServerClient.shouldRefreshUsage(
+                lastRefreshAt: now.addingTimeInterval(-31),
+                now: now
+            )
+        )
+        XCTAssertFalse(
+            CodexAppServerClient.shouldRefreshUsage(
+                lastRefreshAt: now.addingTimeInterval(-29),
+                now: now
+            )
+        )
     }
 
     func testMainApplicationWindow_whenBubblePrecedesMainWindow_selectsTheTitledWindow() {

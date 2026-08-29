@@ -14,6 +14,9 @@ struct LaunchpadView: View {
     let onSelectPad: (Pad) -> Void
     let onRunPad: (Pad) -> Void
     let onVirtualPadPress: (Pad) -> Void
+    let onMoveGridPad: (String, String) -> Void
+
+    @State private var dropTargetPadID: String?
 
     var body: some View {
         GeometryReader { proxy in
@@ -61,10 +64,7 @@ struct LaunchpadView: View {
                                     .frame(width: cell, height: cell)
                             } else {
                                 let pad = page.pads[row * 8 + column]
-                                PadButton(pad: pad, selected: pad.id == selectedPadID, executeOnPress: virtualPreviewEnabled, displayColor: motionColor(row: row, column: column), action: {
-                                    virtualPreviewEnabled ? onVirtualPadPress(pad) : onSelectPad(pad)
-                                }, runAction: { onRunPad(pad) })
-                                    .frame(width: cell, height: cell)
+                                gridPadButton(pad, row: row, column: column, size: cell)
                             }
                         }
                     }
@@ -84,6 +84,44 @@ struct LaunchpadView: View {
             .overlay(RoundedRectangle(cornerRadius: 36).stroke(.black.opacity(0.9), lineWidth: 4))
         }
         .frame(minHeight: 620)
+    }
+
+    @ViewBuilder
+    private func gridPadButton(_ pad: Pad, row: Int, column: Int, size: CGFloat) -> some View {
+        let button = PadButton(
+            pad: pad,
+            selected: pad.id == selectedPadID,
+            executeOnPress: virtualPreviewEnabled,
+            displayColor: motionColor(row: row, column: column),
+            action: { virtualPreviewEnabled ? onVirtualPadPress(pad) : onSelectPad(pad) },
+            runAction: { onRunPad(pad) }
+        )
+        .frame(width: size, height: size)
+        .overlay {
+            if dropTargetPadID == pad.id {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.yellow, lineWidth: 3)
+            }
+        }
+
+        if virtualPreviewEnabled {
+            button
+        } else {
+            button
+                .draggable(pad.id) {
+                    Label(pad.title.isEmpty ? "빈 버튼" : pad.title, systemImage: pad.symbol.isEmpty ? "square" : pad.symbol)
+                        .padding(8)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                }
+                .dropDestination(for: String.self) { sourceIDs, _ in
+                    guard let sourceID = sourceIDs.first,
+                          sourceID.hasPrefix("grid_") else { return false }
+                    onMoveGridPad(sourceID, pad.id)
+                    return sourceID != pad.id
+                } isTargeted: { isTargeted in
+                    dropTargetPadID = isTargeted ? pad.id : nil
+                }
+        }
     }
 
     private func pageButton(index: Int, size: CGFloat) -> some View {

@@ -17,6 +17,20 @@ final class DesktopCodexTaskParserTests: XCTestCase {
         XCTAssertEqual(terminal, .completed)
     }
 
+    func testParser_whenAnActiveTurnIsAborted_endsTheTaskLifecycle() {
+        var parser = DesktopCodexTaskParser(transcriptID: "aborted.jsonl")
+        let taskID = DesktopCodexTaskID(transcriptID: "aborted.jsonl", turnID: "turn-1")
+
+        let events = parser.consume(Data((
+            userMetadata
+                + taskStarted(turnID: "turn-1")
+                + turnAborted(turnID: "turn-1")
+        ).utf8))
+
+        XCTAssertEqual(events, [.started(taskID), .completed(taskID)])
+        XCTAssertTrue(parser.activeTaskIDs.isEmpty)
+    }
+
     func testParser_whenMetadataIsSplitAcrossChunks_buffersItAndReadsMultipleRecordsInTheNextChunk() {
         var parser = DesktopCodexTaskParser(transcriptID: "split.jsonl")
         let metadata = userMetadata
@@ -195,6 +209,10 @@ private extension DesktopCodexTaskParserTests {
 
     func taskCompleted(turnID: String) -> String {
         "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"\(turnID)\"}}\n"
+    }
+
+    func turnAborted(turnID: String) -> String {
+        "{\"type\":\"event_msg\",\"payload\":{\"type\":\"turn_aborted\",\"turn_id\":\"" + turnID + "\"}}\n"
     }
 
     var unknownRecord: String {

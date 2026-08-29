@@ -29,7 +29,9 @@ final class MacActionRunner {
             NSWorkspace.shared.openApplication(at: app, configuration: .init())
             return "앱을 열었습니다."
         case .url:
-            let address = action.value.hasPrefix("http") ? action.value : "https://\(action.value)"
+            let address = action.value.hasPrefix("http") || action.value.hasPrefix("x-apple.")
+                ? action.value
+                : "https://\(action.value)"
             guard let url = URL(string: address) else { throw MacActionError.invalidAddress }
             NSWorkspace.shared.open(url)
             return "웹페이지를 열었습니다."

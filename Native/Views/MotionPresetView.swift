@@ -3,6 +3,7 @@ import SwiftUI
 struct MotionPresetView: View {
     @Bindable var store: LaunchpadStore
     let midi: LaunchpadMIDIManager
+    let isEmbedded: Bool
 
     @Environment(\.dismiss) private var dismiss
     @State private var jsonText = ""
@@ -12,16 +13,29 @@ struct MotionPresetView: View {
     @State private var importMessage = ""
     @State private var isImportError = false
     @State private var previewTimer: Timer?
+    @State private var editingPresetID: UUID?
+    @State private var editedPresetName = ""
+    @FocusState private var focusedPresetID: UUID?
+
+    init(store: LaunchpadStore, midi: LaunchpadMIDIManager, isEmbedded: Bool = false) {
+        self.store = store
+        self.midi = midi
+        self.isEmbedded = isEmbedded
+    }
 
     var body: some View {
         HStack(spacing: 0) {
             presetSidebar
-                .frame(width: 220)
+                .frame(width: isEmbedded ? 190 : 220)
             Divider().overlay(.white.opacity(0.12))
             editor
-                .frame(minWidth: 520)
+                .frame(minWidth: isEmbedded ? 0 : 520)
         }
-        .frame(width: 820, height: 620)
+        .frame(
+            width: isEmbedded ? nil : 820,
+            height: isEmbedded ? nil : 620
+        )
+        .frame(maxWidth: isEmbedded ? .infinity : nil, maxHeight: isEmbedded ? .infinity : nil)
         .background(Color(red: 0.035, green: 0.035, blue: 0.045))
         .onAppear { selectedPresetID = store.motionPresets.first?.id }
         .onDisappear { stopPreview() }
@@ -30,10 +44,7 @@ struct MotionPresetView: View {
     private var presetSidebar: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("MOTION PRESETS").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(.yellow)
-                    Text("8×8 LED 모션").font(.system(size: 16, weight: .bold)).foregroundStyle(.white)
-                }
+                Text("프리셋 목록").font(.system(size: 15, weight: .bold)).foregroundStyle(.white)
                 Spacer()
                 Button(action: { selectedPresetID = nil; jsonText = "" }) {
                     Image(systemName: "plus").frame(width: 28, height: 28)
@@ -46,7 +57,6 @@ struct MotionPresetView: View {
                 VStack(spacing: 9) {
                     Image(systemName: "sparkles.square.filled.on.square").font(.system(size: 28)).foregroundStyle(.orange)
                     Text("아직 프리셋이 없습니다").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.75))
-                    Text("오른쪽에 ChatGPT의 JSON 답변을 붙여 넣으세요.").font(.system(size: 11)).multilineTextAlignment(.center).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -56,19 +66,35 @@ struct MotionPresetView: View {
                             Button { select(preset) } label: {
                                 HStack(spacing: 9) {
                                     MiniMotionPreview(preset: preset)
+                                        .fixedSize()
                                     VStack(alignment: .leading, spacing: 3) {
-                                        Text(preset.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                                        Text("\(preset.frames.count) 프레임 · \(preset.frameDurationMs)ms").font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+                                        if editingPresetID == preset.id {
+                                            TextField("프리셋 이름", text: $editedPresetName)
+                                                .textFieldStyle(.roundedBorder)
+                                                .focused($focusedPresetID, equals: preset.id)
+                                                .onSubmit { finishRenaming(preset) }
+                                                .onExitCommand { cancelRenaming() }
+                                        } else {
+                                            Text(preset.name)
+                                                .font(.system(size: 12, weight: .semibold))
+                                                .lineLimit(2)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                        }
                                     }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                                     Spacer(minLength: 0)
                                 }
                                 .padding(8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                                 .foregroundStyle(.white)
                                 .background(selectedPresetID == preset.id ? .orange.opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: 8))
                                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(selectedPresetID == preset.id ? .orange : .white.opacity(0.1)))
                             }
                             .buttonStyle(.plain)
                             .contextMenu {
+                                Button("이름 변경") {
+                                    beginRenaming(preset)
+                                }
                                 Button("삭제", role: .destructive) {
                                     if selectedPresetID == preset.id { stopPreview(); selectedPresetID = nil }
                                     store.removeMotionPreset(preset)
@@ -79,9 +105,8 @@ struct MotionPresetView: View {
                 }
             }
             Spacer()
-            Text("MK1 팔레트만 허용됨").font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
         }
-        .padding(16)
+        .padding(isEmbedded ? 12 : 16)
         .background(Color(red: 0.055, green: 0.055, blue: 0.07))
     }
 
@@ -90,10 +115,11 @@ struct MotionPresetView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("CHATGPT 모션 가져오기").font(.system(size: 18, weight: .bold)).foregroundStyle(.white)
-                    Text("프롬프트를 복사해 원하는 모션을 요청한 뒤 JSON 답변을 붙여 넣으세요.").font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("닫기") { dismiss() }.buttonStyle(.bordered)
+                if !isEmbedded {
+                    Button("닫기") { dismiss() }.buttonStyle(.bordered)
+                }
             }
 
             ScrollView {
@@ -112,7 +138,6 @@ struct MotionPresetView: View {
                         }
                         .buttonStyle(.bordered)
                         Spacer()
-                        Text("JSON 전용").font(.system(size: 10, weight: .bold, design: .monospaced)).foregroundStyle(.yellow)
                     }
 
                     TextEditor(text: $jsonText)
@@ -147,25 +172,17 @@ struct MotionPresetView: View {
 
     @ViewBuilder private var previewSection: some View {
         if let preset = selectedPreset {
-            HStack(alignment: .top, spacing: 22) {
-                VStack(alignment: .leading, spacing: 9) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
                     Text("\(preset.name) 미리보기").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
-                    MotionMatrix(frame: preset.frames[previewFrameIndex])
-                    Text("프레임 \(previewFrameIndex + 1) / \(preset.frames.count)").font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
-                }
-                VStack(alignment: .leading, spacing: 12) {
-                    presetMetric("재생", preset.loop ? "반복" : "한 번")
-                    presetMetric("속도", "\(preset.frameDurationMs)ms / 프레임")
-                    presetMetric("색상", usedColors(in: preset))
+                    Spacer()
                     Button(isPlaying ? "재생 중지" : "실제 Launchpad에서 재생") {
                         isPlaying ? stopPreview() : startPreview(preset)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(isPlaying ? .red : .orange)
-                    Text(midi.isConnected ? "연결된 MK1에도 동시에 표시됩니다." : "MK1 미연결: 화면 미리보기만 재생합니다.")
-                        .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer()
+                MotionMatrix(frame: preset.frames[previewFrameIndex])
             }
         } else {
             ContentUnavailableView("프리셋을 선택하세요", systemImage: "square.grid.3x3")
@@ -178,22 +195,29 @@ struct MotionPresetView: View {
         store.motionPresets.first { $0.id == selectedPresetID }
     }
 
-    private func presetMetric(_ label: String, _ value: String) -> some View {
-        HStack(spacing: 10) {
-            Text(label).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary).frame(width: 38, alignment: .leading)
-            Text(value).font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.86))
-        }
-    }
-
-    private func usedColors(in preset: MotionPreset) -> String {
-        let values = Set(preset.frames.flatMap(\.pixels).map(\.color)).sorted()
-        return values.joined(separator: ", ")
-    }
-
     private func select(_ preset: MotionPreset) {
         stopPreview()
         selectedPresetID = preset.id
         previewFrameIndex = 0
+    }
+
+    private func beginRenaming(_ preset: MotionPreset) {
+        selectedPresetID = preset.id
+        editingPresetID = preset.id
+        editedPresetName = preset.name
+        DispatchQueue.main.async { focusedPresetID = preset.id }
+    }
+
+    private func finishRenaming(_ preset: MotionPreset) {
+        if store.renameMotionPreset(id: preset.id, to: editedPresetName) {
+            editingPresetID = nil
+            focusedPresetID = nil
+        }
+    }
+
+    private func cancelRenaming() {
+        editingPresetID = nil
+        focusedPresetID = nil
     }
 
     private func importPreset() {
@@ -280,6 +304,7 @@ private struct MiniMotionPreview: View {
                 let row = (index - 1) / 8 + 1
                 let column = (index - 1) % 8 + 1
                 Rectangle().fill((PadColor(rawValue: colors["\(row)_\(column)"] ?? "off") ?? .off).color)
+                    .frame(width: 5, height: 5)
             }
         }
         .frame(width: 47, height: 47)

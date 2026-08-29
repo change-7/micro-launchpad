@@ -1,6 +1,6 @@
 import Foundation
 
-enum CodexActivity: String, CaseIterable, Codable, Identifiable {
+enum CodexActivity: String, CaseIterable, Codable, Identifiable, Sendable {
     case idle
     case connecting
     case running
@@ -26,9 +26,22 @@ enum CodexEventReducer {
     static func activity(for method: String) -> CodexActivity? {
         let normalized = method.lowercased()
         if normalized == "turn/completed" { return .completed }
-        if normalized == "turn/failed" || normalized == "turn/cancelled" { return .failed }
-        if normalized.contains("approval") || normalized.contains("requestuserinput") { return .waitingForApproval }
-        if normalized.contains("turn/started") || normalized.contains("turn/start") || normalized.contains("item/started") {
+        if normalized == "turn/failed"
+            || normalized == "turn/cancelled"
+            || normalized == "turn/interrupted"
+            || normalized == "turn/aborted" { return .failed }
+        if normalized.contains("approval")
+            || normalized.contains("requestuserinput")
+            || normalized.contains("awaitinginput")
+            || normalized.contains("confirmation") { return .waitingForApproval }
+
+        // App Server streams progress through turn/*, item/*, and realtime/raw
+        // response notifications. Any of these means Codex is still doing work;
+        // item/completed and rawResponse/completed happen before turn/completed.
+        if normalized.hasPrefix("turn/")
+            || normalized.hasPrefix("item/")
+            || normalized.hasPrefix("thread/realtime/")
+            || normalized.hasPrefix("rawresponse/") {
             return .running
         }
         return nil
@@ -157,7 +170,7 @@ struct DesktopCodexTaskParser {
             guard activeTaskIDs.insert(taskID).inserted else { return nil }
             completedTaskIDs.remove(taskID)
             return .started(taskID)
-        case "task_complete":
+        case "task_complete", "turn_aborted":
             guard completedTaskIDs.insert(taskID).inserted else { return nil }
             activeTaskIDs.remove(taskID)
             return .completed(taskID)
@@ -265,6 +278,11 @@ struct CodexWeeklyUsage: Equatable, Sendable {
     var resetsAt: Date?
 }
 
+struct CodexFiveHourUsage: Equatable, Sendable {
+    var usedPercent: Int
+    var resetsAt: Date?
+}
+
 enum CodexWeeklyUsageGrid {
     private static let digitPixels: [Character: [String]] = [
         "0": ["111", "101", "101", "101", "111"],
@@ -291,7 +309,12 @@ enum CodexWeeklyUsageGrid {
 
     static func numericPixels(remainingPercent: Int) -> [Bool] {
         let normalizedPercent = min(max(remainingPercent, 0), 100)
-        let text = normalizedPercent == 100 ? "00" : String(format: "%02d", normalizedPercent)
+        let text: String
+        switch normalizedPercent {
+        case 0: text = "0"
+        case 100: text = "00"
+        default: text = String(format: "%02d", normalizedPercent)
+        }
         var pixels = Array(repeating: false, count: 64)
         for (digitIndex, digit) in text.enumerated() {
             guard let rows = digitPixels[digit] else { continue }
@@ -326,21 +349,6 @@ enum CodexWeeklyUsageDisplayStyle: String, CaseIterable, Codable, Identifiable {
         case .level: "상태 표시"
         case .number: "숫자 표시"
         }
-    }
-}
-
-enum CodexDisplayPageAssignment {
-    static func separate(
-        motionPageID: UUID?,
-        weeklyUsagePageID: UUID?,
-        availablePageIDs: [UUID]
-    ) -> (motionPageID: UUID?, weeklyUsagePageID: UUID?) {
-        guard let firstPageID = availablePageIDs.first else { return (nil, nil) }
-        let motionPageID = motionPageID.flatMap { availablePageIDs.contains($0) ? $0 : nil } ?? firstPageID
-        let otherPageIDs = availablePageIDs.filter { $0 != motionPageID }
-        guard let fallbackWeeklyUsagePageID = otherPageIDs.first else { return (motionPageID, nil) }
-        let weeklyUsagePageID = weeklyUsagePageID.flatMap { otherPageIDs.contains($0) ? $0 : nil } ?? fallbackWeeklyUsagePageID
-        return (motionPageID, weeklyUsagePageID)
     }
 }
 

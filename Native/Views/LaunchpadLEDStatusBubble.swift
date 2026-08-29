@@ -16,6 +16,7 @@ final class LaunchpadLEDStatusBubble: NSObject, NSWindowDelegate {
     private var hasInstalledContent = false
     private var displayedSize: LaunchpadLEDBubbleSize?
     var onVisibilityPreferenceChanged: ((Bool, Bool) -> Void)?
+    var onSelectPage: ((Int) -> Void)?
 
     override init() {
         panel = NSPanel(
@@ -53,7 +54,12 @@ final class LaunchpadLEDStatusBubble: NSObject, NSWindowDelegate {
         let size = store.codexMotionDisplaySettings.launchpadLEDBubbleSize
         if !hasInstalledContent || displayedSize != size {
             panel.contentView = LaunchpadBubbleHostingView(
-                rootView: LaunchpadLEDStatusBubbleView(midi: midi, size: size)
+                rootView: LaunchpadLEDStatusBubbleView(
+                    midi: midi,
+                    store: store,
+                    size: size,
+                    onSelectPage: { [weak self] index in self?.onSelectPage?(index) }
+                )
             )
             hasInstalledContent = true
             displayedSize = size
@@ -140,7 +146,9 @@ private final class LaunchpadBubbleHostingView<Content: View>: NSHostingView<Con
 
 private struct LaunchpadLEDStatusBubbleView: View {
     let midi: LaunchpadMIDIManager
+    @Bindable var store: LaunchpadStore
     let size: LaunchpadLEDBubbleSize
+    let onSelectPage: (Int) -> Void
 
     var body: some View {
         let state = midi.ledState
@@ -149,9 +157,9 @@ private struct LaunchpadLEDStatusBubbleView: View {
                 HStack(spacing: gap) {
                     ForEach(0..<8, id: \.self) { column in
                         led(state.grid[row * 8 + column])
-                        }
                     }
                 }
+            }
         }
         .padding(padding)
         .frame(width: points, height: points)
@@ -159,6 +167,19 @@ private struct LaunchpadLEDStatusBubbleView: View {
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(.white.opacity(0.16))
+        }
+        .contextMenu {
+            ForEach(Array(store.pages.enumerated()), id: \.element.id) { index, page in
+                Button {
+                    onSelectPage(index)
+                } label: {
+                    if index == store.selectedPage {
+                        Label("P\(index + 1) · \(page.name)", systemImage: "checkmark")
+                    } else {
+                        Text("P\(index + 1) · \(page.name)")
+                    }
+                }
+            }
         }
     }
 
