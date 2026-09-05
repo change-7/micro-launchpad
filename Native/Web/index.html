@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#050505">
+    <meta name="description" content="A local control surface for registered Mac applications.">
+    <title>Micro Launchpad | Mac apps</title>
+    <link rel="stylesheet" href="./styles.css">
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to app controls</a>
+
+    <div class="site-shell">
+      <header class="site-header" aria-label="Micro Launchpad header">
+        <a class="brand" href="./" aria-label="Micro Launchpad home">
+          <span class="brand-mark" aria-hidden="true">M</span>
+          <span class="brand-name">Micro Launchpad</span>
+        </a>
+
+        <div class="connection-status" id="connection-status" role="status" aria-live="polite">
+          <span class="status-pip" aria-hidden="true"></span>
+          <span id="connection-label">Connecting</span>
+        </div>
+      </header>
+
+      <main id="main-content">
+        <section class="intro" aria-labelledby="page-title">
+          <div>
+            <p class="eyebrow">Local control</p>
+            <h1 id="page-title">Mac apps, within reach.</h1>
+            <p class="intro-copy">Launch or quit registered apps from any device on your private network.</p>
+          </div>
+          <div class="intro-note">
+            <span class="note-label">Scope</span>
+            <span class="note-value">Registered apps only</span>
+          </div>
+        </section>
+
+        <section class="auth-section" id="auth-section" aria-labelledby="auth-title">
+          <div class="auth-copy">
+            <p class="eyebrow">Private access</p>
+            <h2 id="auth-title">Connect to this Mac</h2>
+            <p>Enter the local API token to view and control registered apps. It stays in memory only.</p>
+          </div>
+          <form class="auth-form" id="auth-form">
+            <div class="field-group">
+              <label for="token-input">Access token</label>
+              <input
+                id="token-input"
+                name="token"
+                type="password"
+                autocomplete="off"
+                autocapitalize="none"
+                spellcheck="false"
+                required
+              >
+            </div>
+            <button class="button button-launch" type="submit">Connect</button>
+          </form>
+        </section>
+
+        <section class="apps-section" aria-labelledby="apps-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Available now</p>
+              <h2 id="apps-title">Registered apps</h2>
+            </div>
+            <button class="button button-secondary" id="refresh-button" type="button">
+              <span>Refresh</span>
+            </button>
+          </div>
+
+          <div class="feedback" id="feedback" role="status" aria-live="polite" hidden></div>
+          <div class="app-list" id="app-list" aria-live="polite" aria-busy="true">
+            <div class="loading-row" aria-hidden="true">
+              <span class="loading-block loading-block-mark"></span>
+              <span class="loading-copy"><span></span><span></span></span>
+              <span class="loading-actions"><span></span><span></span></span>
+            </div>
+            <div class="loading-row" aria-hidden="true">
+              <span class="loading-block loading-block-mark"></span>
+              <span class="loading-copy"><span></span><span></span></span>
+              <span class="loading-actions"><span></span><span></span></span>
+            </div>
+            <div class="loading-row" aria-hidden="true">
+              <span class="loading-block loading-block-mark"></span>
+              <span class="loading-copy"><span></span><span></span></span>
+              <span class="loading-actions"><span></span><span></span></span>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <span>Private network control surface</span>
+        <span id="last-updated">Waiting for catalog</span>
+      </footer>
+    </div>
+  </body>
+</html>
