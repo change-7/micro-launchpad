@@ -31,10 +31,20 @@ struct ChatGPTMicroLaunchpadApp: App {
                 Button("단축키 권한 요청") { runner.requestAccessibilityPermission() }
             }
 
+            CommandGroup(after: .appSettings) {
+                SettingsLink {
+                    Text("API 사용법")
+                }
+            }
+
             CommandGroup(replacing: .appTermination) {
                 Button("창 닫기") { appDelegate.hideMainWindow() }
                     .keyboardShortcut("q", modifiers: [.command])
             }
+        }
+
+        Settings {
+            LocalAPISettingsView()
         }
     }
 }
