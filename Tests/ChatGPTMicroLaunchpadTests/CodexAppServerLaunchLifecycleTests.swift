@@ -24,6 +24,17 @@ final class CodexAppServerLaunchLifecycleTests: XCTestCase {
         )
     }
 
+    func testRemoteActivity_whenStaleActiveNotificationRepeats_doesNotClearDesktopCompletion() {
+        XCTAssertFalse(
+            CodexAppServerClient.shouldResetDesktopActivity(
+                for: .running,
+                desktopActivity: .completed,
+                previousAppServerActivity: .running
+            ),
+            "A repeated app-server running notification must not resurrect a completed desktop task."
+        )
+    }
+
     func testRemoteMessage_whenMultipleSessionsAreRunning_includesTheActiveCount() {
         XCTAssertEqual(
             CodexAppServerClient.remoteMessage(
@@ -81,6 +92,31 @@ final class CodexAppServerLaunchLifecycleTests: XCTestCase {
         XCTAssertEqual(usage.fiveHour?.resetsAt?.timeIntervalSince1970, 1_786_161_000)
         XCTAssertEqual(usage.weekly?.usedPercent, 22)
         XCTAssertEqual(usage.weekly?.resetsAt?.timeIntervalSince1970, 1_786_161_493)
+    }
+
+    func testWeeklyUsage_whenOtherLimitAlsoHasSevenDayWindow_usesCodexLimit() {
+        let result: [String: Any] = [
+            "rateLimits": [
+                "limitId": "codex",
+                "secondary": ["windowDurationMins": 10_080, "usedPercent": 67]
+            ],
+            "rateLimitsByLimitId": [
+                "codex": [
+                    "limitId": "codex",
+                    "secondary": ["windowDurationMins": 10_080, "usedPercent": 67]
+                ],
+                "base_model_inference": [
+                    "limitId": "base_model_inference",
+                    "primary": ["windowDurationMins": 10_080, "usedPercent": 0]
+                ]
+            ]
+        ]
+
+        XCTAssertEqual(
+            CodexAppServerClient.weeklyUsage(from: result)?.usedPercent,
+            67,
+            "The unrelated base-model seven-day limit must not replace Codex weekly usage."
+        )
     }
 
     func testUsageRefresh_whenLastRefreshIsOlderThanInterval_isDue() {

@@ -86,6 +86,84 @@ final class DesktopCodexTaskMonitorTests: XCTestCase {
     }
 
     @MainActor
+    func testMonitor_whenStableSessionHasOrphanedAndCurrentTurnsAtStartup_restoresOnlyNewestTurn() async throws {
+        // Given
+        let fixture = try MonitorFixture()
+        let transcript = try fixture.writeTranscript(
+            relativePath: "2026/08/01/stable-session.jsonl",
+            contents: stableSessionMetadata
+                + taskStarted(turnID: "orphaned")
+                + taskStarted(turnID: "current")
+        )
+        var events: [DesktopCodexTaskLifecycleEvent] = []
+        let monitor = fixture.makeMonitor { events.append(contentsOf: $0) }
+
+        // When
+        monitor.start()
+        await monitor.waitUntilIdleForTesting()
+
+        // Then
+        let current = DesktopCodexTaskID(transcriptID: "stable-session", turnID: "current")
+        XCTAssertEqual(events, [.started(current)])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: transcript.path))
+    }
+
+    @MainActor
+    func testMonitor_whenStableSessionHasOrphanedTurnBeforeLaterCompletedTurn_restoresNoWork() async throws {
+        // Given: an interrupted turn never wrote its terminal event, but a later
+        // turn in the same stable Codex session started and completed normally.
+        let fixture = try MonitorFixture()
+        _ = try fixture.writeTranscript(
+            relativePath: "2026/08/01/stale-session.jsonl",
+            contents: stableSessionMetadata
+                + taskStarted(turnID: "orphaned")
+                + taskStarted(turnID: "later")
+                + taskCompleted(turnID: "later")
+        )
+        var events: [DesktopCodexTaskLifecycleEvent] = []
+        let monitor = fixture.makeMonitor { events.append(contentsOf: $0) }
+
+        // When
+        monitor.start()
+        await monitor.waitUntilIdleForTesting()
+
+        // Then
+        XCTAssertTrue(
+            events.isEmpty,
+            "A completed later turn proves the older unterminated turn is no longer running."
+        )
+    }
+
+    @MainActor
+    func testMonitor_whenRolloutCopyOmitsCompletionButCanonicalTranscriptHasIt_restoresNoWork() async throws {
+        // Given: Codex can copy a turn into a child rollout before the canonical
+        // root transcript later records its completion.
+        let fixture = try MonitorFixture()
+        let rootMetadata = "{\"type\":\"session_meta\",\"payload\":{\"session_id\":\"root-session\",\"id\":\"root-session\",\"originator\":\"Codex Desktop\",\"thread_source\":\"user\"}}\n"
+        let copyMetadata = "{\"type\":\"session_meta\",\"payload\":{\"session_id\":\"root-session\",\"id\":\"rollout-copy\",\"originator\":\"Codex Desktop\",\"thread_source\":\"subagent\"}}\n"
+        _ = try fixture.writeTranscript(
+            relativePath: "2026/08/01/a-root.jsonl",
+            contents: rootMetadata + taskStarted(turnID: "turn") + taskCompleted(turnID: "turn")
+        )
+        _ = try fixture.writeTranscript(
+            relativePath: "2026/08/01/z-copy.jsonl",
+            contents: copyMetadata + taskStarted(turnID: "turn")
+        )
+        var events: [DesktopCodexTaskLifecycleEvent] = []
+        let monitor = fixture.makeMonitor { events.append(contentsOf: $0) }
+
+        // When
+        monitor.start()
+        await monitor.waitUntilIdleForTesting()
+
+        // Then
+        XCTAssertTrue(
+            events.isEmpty,
+            "A rollout copy must not resurrect work completed in its canonical transcript."
+        )
+    }
+
+    @MainActor
     func testMonitor_whenTranscriptAppearsAfterStart_readsHeaderAndTaskStartFromByteZero() async throws {
         // Given
         let fixture = try MonitorFixture()
@@ -136,7 +214,7 @@ final class DesktopCodexTaskMonitorTests: XCTestCase {
     }
 
     @MainActor
-    func testMonitor_whenMultipleFilesAppear_recursesDeterministicallyAndFiltersSubagents() async throws {
+    func testMonitor_whenMultipleFilesAppear_recursesDeterministicallyAndIncludesSubagents() async throws {
         // Given
         let fixture = try MonitorFixture()
         var events: [DesktopCodexTaskLifecycleEvent] = []
@@ -153,7 +231,7 @@ final class DesktopCodexTaskMonitorTests: XCTestCase {
         )
         _ = try fixture.writeTranscript(
             relativePath: "2026/08/03/subagent.jsonl",
-            contents: desktopMetadata(threadSource: "subagent") + taskStarted(turnID: "ignored")
+            contents: desktopMetadata(threadSource: "subagent") + taskStarted(turnID: "subagent")
         )
 
         // When
@@ -164,6 +242,8 @@ final class DesktopCodexTaskMonitorTests: XCTestCase {
         XCTAssertEqual(events, [
             .started(DesktopCodexTaskID(transcriptID: "2026/08/01/a.jsonl", turnID: "a")),
             .started(DesktopCodexTaskID(transcriptID: "2026/08/02/nested/b.jsonl", turnID: "b"))
+            ,
+            .started(DesktopCodexTaskID(transcriptID: "2026/08/03/subagent.jsonl", turnID: "subagent"))
         ])
     }
 
@@ -451,6 +531,32 @@ final class DesktopCodexTaskMonitorTests: XCTestCase {
     }
 
     @MainActor
+    func testMonitorIntegration_whenLaterTurnStarts_supersedesOrphanedEarlierTurn() async throws {
+        // Given
+        let fixture = try MonitorFixture()
+        var events: [DesktopCodexTaskLifecycleEvent] = []
+        let monitor = fixture.makeMonitor { events.append(contentsOf: $0) }
+        monitor.start()
+        await monitor.waitUntilIdleForTesting()
+        let transcript = try fixture.writeTranscript(
+            relativePath: "2026/08/01/sequential.jsonl",
+            contents: userMetadata + taskStarted(turnID: "orphaned")
+        )
+        fixture.scheduler.fire()
+        await monitor.waitUntilIdleForTesting()
+
+        // When
+        try fixture.append(taskStarted(turnID: "new-turn"), to: transcript)
+        fixture.scheduler.fire()
+        await monitor.waitUntilIdleForTesting()
+
+        // Then
+        let orphaned = DesktopCodexTaskID(transcriptID: "2026/08/01/sequential.jsonl", turnID: "orphaned")
+        let newTurn = DesktopCodexTaskID(transcriptID: "2026/08/01/sequential.jsonl", turnID: "new-turn")
+        XCTAssertEqual(events, [.started(orphaned), .completed(orphaned), .started(newTurn)])
+    }
+
+    @MainActor
     func testMonitor_whenAppendingToALargeTranscript_usesBoundedReadsWithoutRevisitingTheWholePrefix() async throws {
         // Given
         let fixture = try MonitorFixture()
@@ -491,6 +597,10 @@ final class DesktopCodexTaskMonitorTests: XCTestCase {
 extension DesktopCodexTaskMonitorTests {
     var userMetadata: String {
         desktopMetadata(threadSource: "user")
+    }
+
+    var stableSessionMetadata: String {
+        "{\"type\":\"session_meta\",\"payload\":{\"session_id\":\"stable-session\",\"originator\":\"Codex Desktop\",\"thread_source\":\"user\"}}\n"
     }
 
     func desktopMetadata(threadSource: String) -> String {

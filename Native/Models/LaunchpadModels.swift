@@ -3,6 +3,7 @@ import Foundation
 enum ActionKind: String, Codable, CaseIterable, Identifiable {
     case app
     case shortcut
+    case terminalCommand
     case url
     case none
 
@@ -11,6 +12,7 @@ enum ActionKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .app: "앱 실행"
         case .shortcut: "단축키 설정"
+        case .terminalCommand: "터미널 명령"
         case .url: "웹페이지 이동"
         case .none: "없음"
         }
@@ -95,12 +97,32 @@ struct SmartphoneButton: Identifiable, Codable, Hashable {
     var title = ""
     var symbol = "square.grid.2x2"
     var action = PadAction()
+
+    func configuration(at id: String) -> SmartphoneButton {
+        SmartphoneButton(id: id, title: title, symbol: symbol, action: action)
+    }
 }
 
 struct SmartphonePage: Identifiable, Codable, Hashable {
     let id: String
     var name: String
     var buttons: [SmartphoneButton]
+
+    mutating func swapButtonConfigurations(from sourceID: String, to destinationID: String) -> Bool {
+        guard sourceID != destinationID,
+              sourceID.hasPrefix("smartphone_page_"),
+              destinationID.hasPrefix("smartphone_page_"),
+              let sourceIndex = buttons.firstIndex(where: { $0.id == sourceID }),
+              let destinationIndex = buttons.firstIndex(where: { $0.id == destinationID }) else {
+            return false
+        }
+
+        let source = buttons[sourceIndex]
+        let destination = buttons[destinationIndex]
+        buttons[sourceIndex] = destination.configuration(at: sourceID)
+        buttons[destinationIndex] = source.configuration(at: destinationID)
+        return true
+    }
 }
 
 struct LaunchPage: Identifiable, Codable, Hashable {

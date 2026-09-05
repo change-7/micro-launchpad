@@ -61,6 +61,8 @@ final class CodexActivityController {
     @ObservationIgnored private var coordinator = CodexActivityCoordinator()
     @ObservationIgnored private var appServerActivity: CodexActivity = .idle
     @ObservationIgnored private var desktopMonitor: CodexDesktopTaskMonitor?
+    @ObservationIgnored private var desktopCompletionGraceWorkItem: DispatchWorkItem?
+    private static let desktopCompletionGracePeriod: TimeInterval = 3
 
     convenience init() {
         let sessionsRootURL = FileManager.default.homeDirectoryForCurrentUser
@@ -84,6 +86,8 @@ final class CodexActivityController {
     }
 
     func stopDesktopMonitoring() {
+        desktopCompletionGraceWorkItem?.cancel()
+        desktopCompletionGraceWorkItem = nil
         desktopMonitor?.stop()
         desktopMonitor = nil
         activeDesktopSessionIDs.removeAll()
@@ -94,11 +98,21 @@ final class CodexActivityController {
 
     func updateAppServerActivity(_ activity: CodexActivity) {
         appServerActivity = activity
+        if activity == .completed || activity == .failed {
+            scheduleDesktopCompletionFallback()
+        }
+        // Do not cancel the fallback when the App Server repeats a stale
+        // running/approval update. Only a real Desktop `started` event can
+        // prove that a new task superseded the pending completion.
         updateActiveSessionCount()
         publish(coordinator.updateAppServerActivity(activity))
     }
 
     private func consumeDesktopEvents(_ events: [DesktopCodexTaskLifecycleEvent]) {
+        if events.contains(where: { if case .started = $0 { return true }; return false }) {
+            desktopCompletionGraceWorkItem?.cancel()
+            desktopCompletionGraceWorkItem = nil
+        }
         let nextActivity = coordinator.consume(events)
         updateDesktopSessionSet(with: events)
         publish(nextActivity)
@@ -108,6 +122,24 @@ final class CodexActivityController {
                 onTaskCompletion?(taskID)
             }
         }
+    }
+
+    private func scheduleDesktopCompletionFallback() {
+        guard !activeDesktopSessionIDs.isEmpty else { return }
+        desktopCompletionGraceWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, !self.activeDesktopSessionIDs.isEmpty else { return }
+            let orphaned = self.activeDesktopSessionIDs
+            self.activeDesktopSessionIDs.removeAll()
+            let terminalEvents = orphaned.map(DesktopCodexTaskLifecycleEvent.completed)
+            let nextActivity = self.coordinator.consume(terminalEvents)
+            self.publish(nextActivity)
+            self.updateActiveSessionCount()
+            for taskID in orphaned { self.onTaskCompletion?(taskID) }
+            self.desktopCompletionGraceWorkItem = nil
+        }
+        desktopCompletionGraceWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.desktopCompletionGracePeriod, execute: workItem)
     }
 
     @ObservationIgnored private var activeDesktopSessionIDs: Set<DesktopCodexTaskID> = []
@@ -124,16 +156,30 @@ final class CodexActivityController {
     private func updateActiveSessionCount() {
         let nextCount: Int
         if !activeDesktopSessionIDs.isEmpty {
-            nextCount = activeDesktopSessionIDs.count
+            // The launchpad represents the user's current Codex task, not
+            // every orphaned transcript left in the global sessions folder.
+            // A missing terminal record in an older session must not make the
+            // phone report multiple simultaneous tasks.
+            nextCount = 1
         } else {
-            nextCount = switch appServerActivity {
-            case .connecting, .running, .waitingForApproval: 1
-            case .idle, .completed, .failed: 0
+            nextCount = switch coordinator.activity {
+            case .completed, .failed: 0
+            case .connecting, .running, .waitingForApproval:
+                switch appServerActivity {
+                case .connecting, .running, .waitingForApproval: 1
+                case .idle, .completed, .failed: 0
+                }
+            case .idle:
+                0
             }
         }
         guard activeSessionCount != nextCount else { return }
         activeSessionCount = nextCount
         onActiveSessionCountChange?(nextCount)
+    }
+
+    static func sessionCount(for taskIDs: Set<DesktopCodexTaskID>) -> Int {
+        Set(taskIDs.map(\.transcriptID)).count
     }
 
     private func publish(_ nextActivity: CodexActivity) {
@@ -303,7 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 guard let action = command.action else {
                     return CodexRemoteCommandResult(id: command.id, success: false, message: "스마트폰 버튼 동작이 없습니다.")
                 }
-                message = try remoteActionRunner.execute(action)
+                message = try remoteActionRunner.execute(action, commandFileID: command.buttonID)
             case "codexApproval":
                 guard let decision = command.decision else {
                     return CodexRemoteCommandResult(id: command.id, success: false, message: "Codex 승인 응답이 없습니다.")

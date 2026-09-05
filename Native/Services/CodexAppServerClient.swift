@@ -167,6 +167,8 @@ final class CodexAppServerClient {
         cleanUpProcess()
         isConnected = false
         activity = .idle
+        weeklyUsage = nil
+        fiveHourUsage = nil
     }
 
     func startTask(prompt: String, workingDirectory: String) {
@@ -287,7 +289,11 @@ final class CodexAppServerClient {
                     responseKind: method.lowercased().contains("permissions") ? .permissions : .decision,
                     requestedPermissions: params["permissions"] as? [String: Any]
                 )
-                if Self.shouldResetDesktopActivity(for: .waitingForApproval, desktopActivity: desktopActivity) {
+                if Self.shouldResetDesktopActivity(
+                    for: .waitingForApproval,
+                    desktopActivity: desktopActivity,
+                    previousAppServerActivity: activity
+                ) {
                     desktopActivity = nil
                 }
                 activity = .waitingForApproval
@@ -303,10 +309,15 @@ final class CodexAppServerClient {
                 return
             }
             if let eventActivity = CodexEventReducer.activity(for: method) {
+                let previousAppServerActivity = activity
                 if eventActivity != .waitingForApproval {
                     pendingRemoteApproval = nil
                 }
-                if Self.shouldResetDesktopActivity(for: eventActivity, desktopActivity: desktopActivity) {
+                if Self.shouldResetDesktopActivity(
+                    for: eventActivity,
+                    desktopActivity: desktopActivity,
+                    previousAppServerActivity: previousAppServerActivity
+                ) {
                     // A new App Server turn supersedes the previous desktop completion.
                     // Without clearing this terminal value, the remote bridge can keep
                     // reporting COMPLETED until the transcript monitor catches up.
@@ -322,8 +333,8 @@ final class CodexAppServerClient {
               let request = pendingRequests.removeValue(forKey: requestID) else { return }
         if let error = object["error"] as? [String: Any] {
             if case .weeklyUsage = request {
-                weeklyUsage = nil
-                fiveHourUsage = nil
+                // Rate-limit reads can fail transiently while a turn is
+                // starting. Keep the last successful values for the remote UI.
                 return
             }
             activity = .failed
@@ -355,8 +366,8 @@ final class CodexAppServerClient {
             message = "Codex 작업 중"
         case .weeklyUsage:
             let usage = Self.usage(from: object["result"] as? [String: Any])
-            fiveHourUsage = usage.fiveHour
-            weeklyUsage = usage.weekly
+            fiveHourUsage = Self.retainedUsage(existing: fiveHourUsage, refreshed: usage.fiveHour)
+            weeklyUsage = Self.retainedUsage(existing: weeklyUsage, refreshed: usage.weekly)
         }
     }
 
@@ -429,8 +440,10 @@ final class CodexAppServerClient {
         activeThreadID = nil
         pendingRemoteApproval = nil
         isUsingShellFallback = false
-        weeklyUsage = nil
-        fiveHourUsage = nil
+    }
+
+    static func retainedUsage<T>(existing: T?, refreshed: T?) -> T? {
+        refreshed ?? existing
     }
 
     private static func isRemoteApprovalRequest(_ method: String) -> Bool {
@@ -465,29 +478,56 @@ final class CodexAppServerClient {
 
     func publishRemoteState() {
         let smartphonePages = remoteSmartphonePagesProvider()
-        let remoteActivity = desktopActivity ?? activity
+        let remoteActivity = Self.remoteActivity(
+            desktopActivity: desktopActivity,
+            appServerActivity: activity,
+            hasPendingApproval: pendingRemoteApproval != nil
+        )
         let remoteMessage = Self.remoteMessage(
             for: remoteActivity,
             activeSessionCount: remoteActiveSessionCount,
             fallbackMessage: message
         )
-        remoteBridge.publish(
-            CodexRemoteState(
-                macConnected: true,
-                codexConnected: isConnected,
-                activity: remoteActivity,
-                message: remoteMessage,
-                weeklyUsage: weeklyUsage,
-                fiveHourUsage: fiveHourUsage,
-                smartphonePages: smartphonePages,
-                smartphoneIconAssets: SmartphoneIconAssetProvider.assets(for: smartphonePages),
-                approval: pendingRemoteApproval.map {
-                    CodexRemoteApproval(requestID: $0.requestID, title: $0.title, detail: $0.detail)
-                },
-                completionEventID: remoteCompletionEventID,
-                activeSessionCount: remoteActiveSessionCount
-            )
+        let state = CodexRemoteState(
+            macConnected: true,
+            codexConnected: isConnected,
+            activity: remoteActivity,
+            message: remoteMessage,
+            weeklyUsage: weeklyUsage,
+            fiveHourUsage: fiveHourUsage,
+            smartphonePages: smartphonePages,
+            smartphoneIconAssets: SmartphoneIconAssetProvider.assets(for: smartphonePages),
+            approval: pendingRemoteApproval.map {
+                CodexRemoteApproval(requestID: $0.requestID, title: $0.title, detail: $0.detail)
+            },
+            completionEventID: remoteCompletionEventID,
+            activeSessionCount: remoteActiveSessionCount
         )
+        remoteBridge.publish(state)
+    }
+
+    static func remoteActivity(
+        desktopActivity: CodexActivity?,
+        appServerActivity: CodexActivity,
+        hasPendingApproval: Bool
+    ) -> CodexActivity {
+        if hasPendingApproval { return .waitingForApproval }
+        if let desktopActivity {
+            switch desktopActivity {
+            case .completed, .failed:
+                // The app-server can remain on its last running notification
+                // after the transcript monitor has observed the terminal event.
+                return desktopActivity
+            case .idle, .connecting, .running, .waitingForApproval:
+                break
+            }
+        }
+        switch appServerActivity {
+        case .connecting, .running, .waitingForApproval:
+            return appServerActivity
+        case .idle, .completed, .failed:
+            return desktopActivity ?? appServerActivity
+        }
     }
 
     static func remoteMessage(
@@ -515,11 +555,20 @@ final class CodexAppServerClient {
         return now.timeIntervalSince(lastRefreshAt) >= interval
     }
 
-    static func shouldResetDesktopActivity(for appServerActivity: CodexActivity, desktopActivity: CodexActivity?) -> Bool {
+    static func shouldResetDesktopActivity(
+        for appServerActivity: CodexActivity,
+        desktopActivity: CodexActivity?,
+        previousAppServerActivity: CodexActivity? = nil
+    ) -> Bool {
         guard desktopActivity == .completed else { return false }
         switch appServerActivity {
         case .connecting, .running, .waitingForApproval:
-            return true
+            switch previousAppServerActivity {
+            case .connecting, .running, .waitingForApproval:
+                return false
+            case .idle, .completed, .failed, nil:
+                return true
+            }
         case .idle, .completed, .failed:
             return false
         }
@@ -528,11 +577,16 @@ final class CodexAppServerClient {
     static func usage(from result: [String: Any]?) -> (fiveHour: CodexFiveHourUsage?, weekly: CodexWeeklyUsage?) {
         guard let result else { return (fiveHour: nil, weekly: nil) }
         var candidates = [[String: Any]]()
+        var preferredLimitID: String?
         if let rateLimits = result["rateLimits"] as? [String: Any] {
+            preferredLimitID = rateLimits["limitId"] as? String ?? "codex"
             candidates.append(rateLimits)
         }
         if let rateLimitsByLimitID = result["rateLimitsByLimitId"] as? [String: [String: Any]] {
-            candidates.append(contentsOf: rateLimitsByLimitID.values)
+            let limitID = preferredLimitID ?? "codex"
+            if let preferred = rateLimitsByLimitID[limitID] {
+                candidates.append(preferred)
+            }
         }
         var fiveHour: CodexFiveHourUsage?
         var weekly: CodexWeeklyUsage?

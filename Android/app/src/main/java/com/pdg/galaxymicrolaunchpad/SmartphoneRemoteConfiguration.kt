@@ -7,6 +7,38 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import org.json.JSONObject
 
+/**
+ * Optional usage fields are update-like values on the bridge wire. Swift's
+ * Codable encoder omits nil optionals, so an absent field must not erase a
+ * value that was received in an earlier state snapshot. Only an explicit
+ * JSON null clears the cached value.
+ */
+internal fun mergeRemoteUsageInt(state: JSONObject, key: String, current: Int?): Int? {
+    return mergeRemoteUsageInt(
+        fieldPresent = state.has(key),
+        fieldIsNull = state.isNull(key),
+        fieldValue = state.optInt(key),
+        current = current
+    )
+}
+
+internal fun mergeRemoteUsageInt(
+    fieldPresent: Boolean,
+    fieldIsNull: Boolean,
+    fieldValue: Int?,
+    current: Int?
+): Int? {
+    if (!fieldPresent) return current
+    if (fieldIsNull) return null
+    return fieldValue
+}
+
+internal fun mergeRemoteUsageDouble(state: JSONObject, key: String, current: Double?): Double? {
+    if (!state.has(key)) return current
+    if (state.isNull(key)) return null
+    return state.optDouble(key)
+}
+
 internal fun parseRemoteApproval(state: JSONObject): RemoteApproval? {
     val approval = state.optJSONObject("approval") ?: return null
     return RemoteApproval(
@@ -92,12 +124,28 @@ private fun parseSmartphoneIconAsset(
 internal fun normalizeRemoteActivity(rawActivity: String): String {
     return when (rawActivity.trim().lowercase(java.util.Locale.ROOT)) {
         "working", "work", "in_progress", "in-progress", "inprogress", "processing", "executing", "active", "busy" -> "running"
-        "waiting", "waiting_for_approval", "waiting-for-approval" -> "waitingForApproval"
+        "waiting", "waiting_for_approval", "waiting-for-approval", "waitingforapproval" -> "waitingForApproval"
         "complete", "done", "finished" -> "completed"
         "error", "errored" -> "failed"
         "" -> "idle"
         else -> rawActivity.trim().lowercase(java.util.Locale.ROOT)
     }
+}
+
+internal enum class CodexRevealReason {
+    Running,
+    Completion,
+    Approval,
+    Explicit
+}
+
+internal fun shouldAutoRevealCodexPage(
+    reason: CodexRevealReason,
+    nowElapsedMillis: Long = Long.MAX_VALUE,
+    suppressUntilElapsedMillis: Long = 0L
+): Boolean {
+    if (reason == CodexRevealReason.Running) return false
+    return nowElapsedMillis >= suppressUntilElapsedMillis
 }
 
 internal fun shouldRevealCodex(
@@ -116,4 +164,33 @@ internal fun shouldRevealCodex(
         || previousCompletionEventId != null
         && currentCompletionEventId != null
         && currentCompletionEventId > previousCompletionEventId
+}
+
+/**
+ * A reconnect can replay the same active state that was already visible before
+ * the socket dropped. In that case the activity value does not transition, but
+ * the phone still needs to return to the Codex page so its working motion is
+ * visible again.
+ */
+internal fun shouldRevealCodexAfterReconnect(forceReveal: Boolean, currentActivity: String): Boolean {
+    if (!forceReveal) return false
+    return normalizeRemoteActivity(currentActivity) in setOf("running", "waitingForApproval", "completed")
+}
+
+internal fun isCodexCompletionEvent(
+    previousActivity: String?,
+    currentActivity: String,
+    previousCompletionEventId: Int?,
+    currentCompletionEventId: Int?
+): Boolean {
+    val enteredCompleted = currentActivity == "completed" && previousActivity != "completed"
+    val completionCounterAdvanced = previousCompletionEventId != null
+        && currentCompletionEventId != null
+        && currentCompletionEventId > previousCompletionEventId
+    return enteredCompleted || completionCounterAdvanced
+}
+
+internal fun codexHeaderPulseAlpha(activity: String, progress: Float): Float {
+    if (normalizeRemoteActivity(activity) != "running") return 1f
+    return 0.58f + progress.coerceIn(0f, 1f) * 0.42f
 }

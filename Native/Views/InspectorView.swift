@@ -69,9 +69,10 @@ struct InspectorView: View {
                     sectionDivider
                 }
                 fieldSection("할당할 동작") {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 9) {
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 9) {
                         actionButton(.app)
                         actionButton(.shortcut)
+                        actionButton(.terminalCommand)
                         actionButton(.url)
                     }
                     if pad.action.kind != .none {
@@ -206,6 +207,8 @@ struct InspectorView: View {
                 targetAppBundleIdentifier: $pad.action.targetAppBundleIdentifier,
                 launchTargetAppIfNeeded: $pad.action.launchTargetAppIfNeeded
             )
+        case .terminalCommand:
+            DarkTextField(text: $pad.action.value, placeholder: "예: open -a Safari")
         case .url:
             DarkTextField(text: $pad.action.value, placeholder: "https://example.com")
         case .none:
@@ -280,7 +283,7 @@ struct InspectorView: View {
 
     private func defaultValue(for kind: ActionKind) -> String {
         switch kind {
-        case .app, .shortcut: ""
+        case .app, .shortcut, .terminalCommand: ""
         case .url: "https://chatgpt.com"
         case .none: ""
         }

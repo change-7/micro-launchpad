@@ -11,5 +11,6 @@
 <key>CFBundleVersion</key><string>2</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSAppleEventsUsageDescription</key><string>마이크로 런치패드가 버튼에 등록된 터미널 명령을 실행하기 위해 Terminal을 제어합니다.</string>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 </dict></plist>

@@ -108,7 +108,7 @@ final class CodexActivityIntegrationTests: XCTestCase {
         )
         fixture.scheduler.fire()
         await fixture.waitForMonitorToBecomeIdle()
-        XCTAssertEqual(controller.activeSessionCount, 2)
+        XCTAssertEqual(controller.activeSessionCount, 1)
 
         // When only the first session completes
         try fixture.append(taskCompleted(turnID: "one"), to: first)
@@ -154,6 +154,57 @@ final class CodexActivityIntegrationTests: XCTestCase {
         // Then
         XCTAssertEqual(controller.activity, .completed)
         XCTAssertEqual(presentationChanges, [.completed])
+    }
+
+    @MainActor
+    func testActiveSessionCount_whenDesktopCompletesWhileAppServerIsStaleRunning_becomesZero() async throws {
+        let fixture = try MonitorFixture()
+        let controller = makeController(fixture: fixture)
+        controller.startDesktopMonitoring()
+        await fixture.waitForMonitorToBecomeIdle()
+        controller.updateAppServerActivity(.running)
+        let transcript = try fixture.writeTranscript(
+            relativePath: "2026/08/01/stale-running-count.jsonl",
+            contents: userMetadata + taskStarted(turnID: "desktop")
+        )
+        fixture.scheduler.fire()
+        await fixture.waitForMonitorToBecomeIdle()
+        XCTAssertEqual(controller.activeSessionCount, 1)
+
+        try fixture.append(taskCompleted(turnID: "desktop"), to: transcript)
+        fixture.scheduler.fire()
+        await fixture.waitForMonitorToBecomeIdle()
+
+        XCTAssertEqual(
+            controller.activeSessionCount,
+            0,
+            "A completed desktop task must clear the count even when app-server status is stale running."
+        )
+    }
+
+    @MainActor
+    func testCoordinator_whenAppServerStartsNewWorkAfterDesktopCompletion_clearsStaleCompletion() async throws {
+        // Given
+        let fixture = try MonitorFixture()
+        let controller = makeController(fixture: fixture)
+        controller.startDesktopMonitoring()
+        await fixture.waitForMonitorToBecomeIdle()
+        let transcript = try fixture.writeTranscript(
+            relativePath: "2026/08/01/stale-completion.jsonl",
+            contents: userMetadata
+                + taskStarted(turnID: "previous")
+                + taskCompleted(turnID: "previous")
+        )
+        fixture.scheduler.fire()
+        await fixture.waitForMonitorToBecomeIdle()
+        XCTAssertEqual(controller.activity, .completed)
+
+        // When a new App Server turn starts before the desktop monitor sees its task_started event
+        controller.updateAppServerActivity(.running)
+
+        // Then
+        XCTAssertEqual(controller.activity, .running)
+        _ = transcript
     }
 
     @MainActor

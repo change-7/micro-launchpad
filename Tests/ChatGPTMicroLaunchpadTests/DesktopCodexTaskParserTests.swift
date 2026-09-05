@@ -2,6 +2,19 @@ import XCTest
 @testable import ChatGPTMicroLaunchpad
 
 final class DesktopCodexTaskParserTests: XCTestCase {
+    func testParser_whenRolloutFilesShareSessionID_usesSessionIDToDeduplicateTaskIdentity() {
+        var parser = DesktopCodexTaskParser(transcriptID: "rollout-copy.jsonl")
+        let metadata = "{\"type\":\"session_meta\",\"payload\":{\"session_id\":\"root-session\",\"id\":\"rollout-copy\",\"originator\":\"Codex Desktop\",\"thread_source\":\"user\"}}\n"
+
+        let events = parser.consume(Data((metadata + taskStarted(turnID: "turn-1")).utf8))
+
+        XCTAssertEqual(
+            events,
+            [.started(DesktopCodexTaskID(transcriptID: "root-session", turnID: "turn-1"))],
+            "Rollout copies from one Codex session must count as one active task."
+        )
+    }
+
     func testParser_whenEligibleTranscriptStartsAndCompletesATask_publishesLifecycleAndActivity() {
         var parser = DesktopCodexTaskParser(transcriptID: "2026/07/31/user.jsonl")
         var coordinator = CodexActivityCoordinator()
@@ -60,9 +73,40 @@ final class DesktopCodexTaskParserTests: XCTestCase {
         XCTAssertEqual(parser.activeTaskIDs, [taskID])
     }
 
-    func testParser_whenTranscriptIsASubagent_rejectsAllTaskEvents() {
+    func testParser_whenTranscriptIsASubagent_acceptsCodexDesktopTaskEvents() {
         var parser = DesktopCodexTaskParser(transcriptID: "subagent.jsonl")
         let transcript = desktopMetadata(threadSource: "subagent") + userMetadata + taskStarted(turnID: "turn-1") + taskCompleted(turnID: "turn-1")
+
+        let updates = parser.consume(Data(transcript.utf8))
+
+        XCTAssertEqual(updates, [
+            .started(DesktopCodexTaskID(transcriptID: "subagent.jsonl", turnID: "turn-1")),
+            .completed(DesktopCodexTaskID(transcriptID: "subagent.jsonl", turnID: "turn-1"))
+        ])
+        XCTAssertTrue(parser.activeTaskIDs.isEmpty)
+    }
+
+    func testParser_whenTurnContextPrecedesTaskStarted_recognizesWorkImmediatelyAndCompletesIt() {
+        var parser = DesktopCodexTaskParser(transcriptID: "early-work.jsonl")
+        let transcript = userMetadata
+            + turnContext(turnID: "turn-1")
+            + progressEvent(turnID: "turn-1", type: "item_started")
+            + taskCompleted(turnID: "turn-1")
+
+        let updates = parser.consume(Data(transcript.utf8))
+
+        XCTAssertEqual(updates, [
+            .started(DesktopCodexTaskID(transcriptID: "early-work.jsonl", turnID: "turn-1")),
+            .completed(DesktopCodexTaskID(transcriptID: "early-work.jsonl", turnID: "turn-1"))
+        ])
+        XCTAssertTrue(parser.activeTaskIDs.isEmpty)
+    }
+
+    func testParser_whenTranscriptIsAGuardianReview_ignoresTaskEvents() {
+        var parser = DesktopCodexTaskParser(transcriptID: "guardian-review.jsonl")
+        let transcript = desktopMetadata(threadSource: "guardian_review")
+            + taskStarted(turnID: "turn-1")
+            + taskCompleted(turnID: "turn-1")
 
         let updates = parser.consume(Data(transcript.utf8))
 
@@ -121,7 +165,6 @@ final class DesktopCodexTaskParserTests: XCTestCase {
 
         XCTAssertEqual(started, [.started(DesktopCodexTaskID(transcriptID: "idempotent.jsonl", turnID: "turn-1"))])
         XCTAssertEqual(completed, [
-            .completed(DesktopCodexTaskID(transcriptID: "idempotent.jsonl", turnID: "missing")),
             .completed(DesktopCodexTaskID(transcriptID: "idempotent.jsonl", turnID: "turn-1"))
         ])
         XCTAssertTrue(parser.activeTaskIDs.isEmpty)
@@ -151,6 +194,18 @@ final class DesktopCodexTaskParserTests: XCTestCase {
         XCTAssertEqual(afterSecondCompletion, .completed)
     }
 
+    @MainActor
+    func testActivityController_countsOneSessionOnceAcrossMultipleActiveTurns() {
+        let firstTurn = DesktopCodexTaskID(transcriptID: "root-session", turnID: "turn-1")
+        let secondTurn = DesktopCodexTaskID(transcriptID: "root-session", turnID: "turn-2")
+
+        XCTAssertEqual(
+            CodexActivityController.sessionCount(for: [firstTurn, secondTurn]),
+            1,
+            "Multiple active turns from one root session must be shown as one session."
+        )
+    }
+
     func testCoordinator_whenDesktopTaskCompletesAndAppServerRemainsStaleRunning_reportsDesktopCompletion() {
         var coordinator = CodexActivityCoordinator()
         let desktopID = DesktopCodexTaskID(transcriptID: "desktop.jsonl", turnID: "turn-1")
@@ -160,6 +215,23 @@ final class DesktopCodexTaskParserTests: XCTestCase {
         let desktopCompleted = coordinator.consume([.completed(desktopID)])
 
         XCTAssertEqual(desktopCompleted, .completed)
+    }
+
+    func testCoordinator_whenStaleAppServerRunningRepeatsAfterDesktopCompletion_remainsCompleted() {
+        var coordinator = CodexActivityCoordinator()
+        let desktopID = DesktopCodexTaskID(transcriptID: "desktop.jsonl", turnID: "turn-1")
+
+        _ = coordinator.updateAppServerActivity(.running)
+        _ = coordinator.consume([.started(desktopID)])
+        _ = coordinator.consume([.completed(desktopID)])
+
+        let repeatedStaleRunning = coordinator.updateAppServerActivity(.running)
+
+        XCTAssertEqual(
+            repeatedStaleRunning,
+            .completed,
+            "Repeating the old app-server running state must not resurrect a completed desktop task."
+        )
     }
 
     func testCoordinator_whenDesktopAndAppServerOverlap_keepsRunningUntilAllWorkEnds() {
@@ -207,6 +279,14 @@ private extension DesktopCodexTaskParserTests {
         "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"\(turnID)\"}}\n"
     }
 
+    func turnContext(turnID: String) -> String {
+        "{\"type\":\"turn_context\",\"payload\":{\"turn_id\":\"\(turnID)\"}}\n"
+    }
+
+    func progressEvent(turnID: String, type: String) -> String {
+        "{\"type\":\"event_msg\",\"payload\":{\"type\":\"\(type)\",\"turn_id\":\"\(turnID)\"}}\n"
+    }
+
     func taskCompleted(turnID: String) -> String {
         "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"\(turnID)\"}}\n"
     }
@@ -216,6 +296,6 @@ private extension DesktopCodexTaskParserTests {
     }
 
     var unknownRecord: String {
-        "{\"type\":\"event_msg\",\"payload\":{\"type\":\"item_started\",\"turn_id\":\"turn-1\"}}\n"
+        "{\"type\":\"event_msg\",\"payload\":{\"type\":\"unknown_event\",\"turn_id\":\"turn-1\"}}\n"
     }
 }

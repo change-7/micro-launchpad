@@ -2,6 +2,22 @@ import XCTest
 @testable import ChatGPTMicroLaunchpad
 
 final class CodexRemoteStateTests: XCTestCase {
+    @MainActor
+    func testUsageRefresh_whenResponseIsMissingRetainsLastKnownUsage() {
+        let existingWeekly = CodexWeeklyUsage(usedPercent: 33, resetsAt: nil)
+        let refreshedWeekly = CodexWeeklyUsage(usedPercent: 41, resetsAt: nil)
+
+        XCTAssertEqual(
+            CodexAppServerClient.retainedUsage(existing: existingWeekly, refreshed: nil),
+            existingWeekly,
+            "A transient rate-limit failure must not blank the usage gauge."
+        )
+        XCTAssertEqual(
+            CodexAppServerClient.retainedUsage(existing: existingWeekly, refreshed: refreshedWeekly),
+            refreshedWeekly
+        )
+    }
+
     func testRemoteState_whenMacReportsUsedPercent_exposesMatchingRemainingPercent() {
         let usage = CodexWeeklyUsage(usedPercent: 33, resetsAt: nil)
         let fiveHourUsage = CodexFiveHourUsage(usedPercent: 16, resetsAt: nil)
@@ -206,6 +222,31 @@ final class CodexRemoteStateTests: XCTestCase {
         XCTAssertEqual(decoded.approval, approval)
     }
 
+    @MainActor
+    func testRemoteActivity_pendingApprovalTakesPrecedenceOverDesktopRunningActivity() {
+        XCTAssertEqual(
+            CodexAppServerClient.remoteActivity(
+                desktopActivity: .running,
+                appServerActivity: .running,
+                hasPendingApproval: true
+            ),
+            .waitingForApproval
+        )
+    }
+
+    @MainActor
+    func testRemoteActivity_desktopCompletionOverridesStaleAppServerRunning() {
+        XCTAssertEqual(
+            CodexAppServerClient.remoteActivity(
+                desktopActivity: .completed,
+                appServerActivity: .running,
+                hasPendingApproval: false
+            ),
+            .completed,
+            "A stale app-server running state must not hide desktop task completion."
+        )
+    }
+
     func testRemoteState_transmitsActiveSessionCount() throws {
         let state = CodexRemoteState(
             macConnected: true,
@@ -236,6 +277,57 @@ final class CodexRemoteStateTests: XCTestCase {
 
         XCTAssertEqual(decoded.buttonID, "smartphone_page_0_button_0")
         XCTAssertEqual(decoded.action, PadAction(kind: .shortcut, value: "cmd+shift+4"))
+    }
+
+    func testRemoteCommand_roundTripsTerminalCommandActionPayload() throws {
+        let action = PadAction(kind: .terminalCommand, value: "open -a Safari")
+        let command = CodexRemoteCommand(
+            type: "command",
+            protocolVersion: 1,
+            id: "phone-terminal-button",
+            command: "smartphoneButton",
+            buttonID: "smartphone_page_0_button_0",
+            action: action
+        )
+
+        let decoded = try JSONDecoder().decode(CodexRemoteCommand.self, from: JSONEncoder().encode(command))
+
+        XCTAssertEqual(decoded.action, action)
+    }
+
+    func testTerminalAutomationBundleDeclaresAppleEventsUsageDescription() throws {
+        let projectRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let plistURL = projectRoot.appendingPathComponent("script/Info.plist")
+        let plistData = try Data(contentsOf: plistURL)
+        let plist = try XCTUnwrap(
+            try PropertyListSerialization.propertyList(from: plistData, format: nil) as? [String: Any]
+        )
+
+        XCTAssertEqual(
+            plist["NSAppleEventsUsageDescription"] as? String,
+            "마이크로 런치패드가 버튼에 등록된 터미널 명령을 실행하기 위해 Terminal을 제어합니다."
+        )
+    }
+
+    @MainActor
+    func testTerminalCommandScript_createsCommandWindowBeforeActivatingTerminal() {
+        let source = MacActionRunner.terminalAppleScript(for: "echo test")
+        let commandOffset = source.distance(from: source.startIndex, to: source.range(of: "do script")!.lowerBound)
+        let activateOffset = source.distance(from: source.startIndex, to: source.range(of: "activate")!.lowerBound)
+
+        XCTAssertLessThan(commandOffset, activateOffset)
+    }
+
+    @MainActor
+    func testTerminalCommandScript_reusesExistingFrontWindowInsteadOfOpeningAnother() {
+        let source = MacActionRunner.terminalAppleScript(for: "echo test")
+
+        XCTAssertTrue(source.contains("reopen"))
+        XCTAssertTrue(source.contains("repeat until (count of windows) > 0"))
+        XCTAssertTrue(source.contains("in front window"))
     }
 
     func testRemoteCommand_roundTripsCodexApprovalDecision() throws {

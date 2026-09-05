@@ -240,7 +240,8 @@ struct ContentView: View {
     }
 
     private func run(_ pad: Pad) {
-        do { store.statusMessage = try runner.execute(pad.action) }
+        let commandFileID = TerminalCommandFileStore.macButtonIdentifier(pageIndex: store.selectedPage, padID: pad.id)
+        do { store.statusMessage = try runner.execute(pad.action, commandFileID: commandFileID) }
         catch MacActionError.accessibilityRequired {
             store.statusMessage = MacActionError.accessibilityRequired.localizedDescription
             showingPermissionAlert = true
@@ -361,6 +362,10 @@ struct ContentView: View {
     }
 
     private func evaluateIdleScreensaver() {
+        // A live Codex task can remain `.running` while no new status event is
+        // emitted during file reads or tool execution. Recover the visual
+        // motion if it was interrupted by page changes or a transient update.
+        resumeCodexMotionForCurrentPageIfNeeded()
         let settings = store.codexMotionDisplaySettings.idleScreensaver
         let launchpadAndCodexIdleSeconds = Date().timeIntervalSince(lastLaunchpadOrCodexActivity)
         let macIdleSeconds = CGEventSource.secondsSinceLastEventType(

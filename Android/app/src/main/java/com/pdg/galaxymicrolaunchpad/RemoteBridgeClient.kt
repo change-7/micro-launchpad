@@ -14,8 +14,20 @@ import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.SocketTimeoutException
 import java.util.UUID
 import java.util.concurrent.Executors
+
+/** App-scoped owner shared by the foreground service and the visible activity. */
+internal object RemoteBridgeRuntime {
+    @Volatile private var sharedClient: RemoteBridgeClient? = null
+
+    fun client(context: Context): RemoteBridgeClient {
+        return sharedClient ?: synchronized(this) {
+            sharedClient ?: RemoteBridgeClient(context.applicationContext).also { sharedClient = it }
+        }
+    }
+}
 
 enum class RemoteConnectionState {
     Disconnected,
@@ -24,7 +36,7 @@ enum class RemoteConnectionState {
     Connected
 }
 
-internal fun shouldClearRemoteStateAfterDisconnect(hasReceivedState: Boolean): Boolean = !hasReceivedState
+internal fun shouldDisconnectAfterReadTimeout(consecutiveTimeouts: Int): Boolean = consecutiveTimeouts >= 2
 
 internal data class RemoteApproval(
     val title: String,
@@ -35,6 +47,7 @@ class RemoteBridgeClient(context: Context) {
     companion object {
         private const val SERVICE_TYPE = "_micro-launchpad._tcp."
         private const val CONNECT_TIMEOUT_MS = 2_000
+        private const val READ_TIMEOUT_MS = 5_000
         private const val RETRY_DELAY_MS = 3_000L
     }
 
@@ -51,12 +64,26 @@ class RemoteBridgeClient(context: Context) {
     @Volatile private var lastActivity: String? = null
     @Volatile private var lastCompletionEventId: Int? = null
     @Volatile private var hasReceivedRemoteState = false
+    /** Set when a reconnect may replay the same active state without a transition. */
+    @Volatile private var forceCodexRevealAfterReconnect = false
+    // Usage values are optional on the wire. Keep a transport-level cache so
+    // an activity-only update cannot blank values that were already received.
+    @Volatile private var cachedUsedPercent: Int? = null
+    @Volatile private var cachedRemainingPercent: Int? = null
+    @Volatile private var cachedFiveHourRemainingPercent: Int? = null
+    @Volatile private var cachedResetsAt: Double? = null
+    @Volatile private var cachedFiveHourResetsAt: Double? = null
     private val iconBitmapCache = mutableMapOf<String, DecodedSmartphoneIcon>()
     private var smartphoneIconAssets = JSONObject()
     private var lastStateObject: JSONObject? = null
 
-    var onCodexReveal: (() -> Unit)? = null
+    /** Called on the main thread when a Codex task completion is observed. */
+    var onCodexCompletion: (() -> Unit)? = null
+    /** Called on the main thread when Codex enters running state. */
+    var onCodexRunning: (() -> Unit)? = null
+
     var codexRevealEventId by mutableStateOf(0)
+    internal var codexRevealReason by mutableStateOf(CodexRevealReason.Running)
         private set
 
     var connectionState by mutableStateOf(RemoteConnectionState.Disconnected)
@@ -81,8 +108,6 @@ class RemoteBridgeClient(context: Context) {
         private set
     internal var pendingApproval by mutableStateOf<RemoteApproval?>(null)
         private set
-    internal var completionEventId by mutableStateOf(0)
-        private set
     internal var activeSessionCount by mutableStateOf(0)
         private set
     internal var smartphonePages by mutableStateOf(buttonPages)
@@ -96,6 +121,7 @@ class RemoteBridgeClient(context: Context) {
 
     fun stop() {
         hasReceivedRemoteState = false
+        forceCodexRevealAfterReconnect = false
         started = false
         discoveryListener?.let { listener ->
             runCatching { nsdManager.stopServiceDiscovery(listener) }
@@ -154,6 +180,7 @@ class RemoteBridgeClient(context: Context) {
             try {
                 val target = Socket()
                 target.connect(InetSocketAddress(serviceInfo.host, serviceInfo.port), CONNECT_TIMEOUT_MS)
+                target.soTimeout = READ_TIMEOUT_MS
                 socket = target
                 writer = OutputStreamWriter(target.getOutputStream(), Charsets.UTF_8)
                 writer?.append("{\"type\":\"hello\",\"protocolVersion\":1}\n")
@@ -169,9 +196,15 @@ class RemoteBridgeClient(context: Context) {
                 iconBitmapCache.clear()
                 smartphoneIconAssets = JSONObject()
                 lastStateObject = null
-                if (shouldClearRemoteStateAfterDisconnect(hasReceivedRemoteState)) {
-                    clearRemoteState()
+                if (started && hasReceivedRemoteState) {
+                    // Make the first replayed active state reveal Codex again.
+                    forceCodexRevealAfterReconnect = true
                 }
+                // Keep an active Codex state across a transient bridge
+                // reconnect. Clearing it here makes the phone stop its
+                // running motion during a short read timeout, even though
+                // the Mac will replay the authoritative state on reconnect.
+                preserveActiveStateDuringReconnect()
                 if (started) {
                     setConnection(RemoteConnectionState.Disconnected)
                     retryDiscovery()
@@ -182,9 +215,21 @@ class RemoteBridgeClient(context: Context) {
 
     private fun readLoop(target: Socket) {
         val reader = BufferedReader(InputStreamReader(target.getInputStream(), Charsets.UTF_8))
+        var consecutiveTimeouts = 0
         while (started && !target.isClosed) {
-            val line = reader.readLine() ?: break
-            parseState(line)
+            try {
+                val line = reader.readLine() ?: break
+                consecutiveTimeouts = 0
+                parseState(line)
+            } catch (_: SocketTimeoutException) {
+                consecutiveTimeouts += 1
+                if (shouldDisconnectAfterReadTimeout(consecutiveTimeouts)) break
+                val currentWriter = writer ?: break
+                synchronized(currentWriter) {
+                    currentWriter.append("{\"type\":\"hello\",\"protocolVersion\":1}\n")
+                    currentWriter.flush()
+                }
+            }
         }
     }
 
@@ -211,10 +256,17 @@ class RemoteBridgeClient(context: Context) {
             }
             if (state.optString("type") != "state") return
             hasReceivedRemoteState = true
-            val nextUsed = if (state.has("usedPercent") && !state.isNull("usedPercent")) state.optInt("usedPercent") else null
-            val nextRemaining = if (state.has("remainingPercent") && !state.isNull("remainingPercent")) state.optInt("remainingPercent") else null
-            val nextFiveHourRemaining = if (state.has("fiveHourRemainingPercent") && !state.isNull("fiveHourRemainingPercent")) state.optInt("fiveHourRemainingPercent") else null
-            val nextActivity = normalizeRemoteActivity(state.optString("activity", "idle"))
+            val nextUsed = mergeRemoteUsageInt(state, "usedPercent", cachedUsedPercent)
+            val nextRemaining = mergeRemoteUsageInt(state, "remainingPercent", cachedRemainingPercent)
+            val nextFiveHourRemaining = mergeRemoteUsageInt(state, "fiveHourRemainingPercent", cachedFiveHourRemainingPercent)
+            // State refreshes may omit activity while the Mac is busy doing
+            // file/tool work. Do not turn that transiently incomplete packet
+            // into idle and hide the running motion.
+            val nextActivity = if (state.has("activity")) {
+                normalizeRemoteActivity(state.optString("activity"))
+            } else {
+                lastActivity ?: "idle"
+            }
             if (state.has("smartphoneIconAssets")) {
                 smartphoneIconAssets = state.optJSONObject("smartphoneIconAssets") ?: JSONObject()
             }
@@ -223,15 +275,44 @@ class RemoteBridgeClient(context: Context) {
             val nextApproval = parseRemoteApproval(state)
             val nextCompletionEventId = state.optInt("completionEventID", 0)
             val nextActiveSessionCount = state.optInt("activeSessionCount", 0).coerceAtLeast(0)
+            val reconnectReveal = shouldRevealCodexAfterReconnect(
+                forceReveal = forceCodexRevealAfterReconnect,
+                currentActivity = nextActivity
+            )
             val revealEvent = shouldRevealCodex(
                 previousActivity = lastActivity,
                 currentActivity = nextActivity,
                 previousCompletionEventId = lastCompletionEventId,
                 currentCompletionEventId = nextCompletionEventId
+            ) || reconnectReveal
+            if (reconnectReveal) {
+                forceCodexRevealAfterReconnect = false
+            }
+            val completionEvent = isCodexCompletionEvent(
+                previousActivity = lastActivity,
+                currentActivity = nextActivity,
+                previousCompletionEventId = lastCompletionEventId,
+                currentCompletionEventId = nextCompletionEventId
+            )
+            val revealReason = when {
+                completionEvent || nextActivity == "completed" && revealEvent -> CodexRevealReason.Completion
+                nextActivity == "waitingForApproval" && revealEvent -> CodexRevealReason.Approval
+                else -> CodexRevealReason.Running
+            }
+            val runningTransition = shouldWakeForCodexRunningTransition(
+                previousActivity = lastActivity,
+                currentActivity = nextActivity,
+                reconnectReveal = reconnectReveal
             )
             lastActivity = nextActivity
             lastCompletionEventId = nextCompletionEventId
-            val nextFiveHourReset = if (state.has("fiveHourResetsAt") && !state.isNull("fiveHourResetsAt")) state.optDouble("fiveHourResetsAt") else null
+            val nextResetsAt = mergeRemoteUsageDouble(state, "resetsAt", cachedResetsAt)
+            val nextFiveHourReset = mergeRemoteUsageDouble(state, "fiveHourResetsAt", cachedFiveHourResetsAt)
+            cachedUsedPercent = nextUsed
+            cachedRemainingPercent = nextRemaining
+            cachedFiveHourRemainingPercent = nextFiveHourRemaining
+            cachedResetsAt = nextResetsAt
+            cachedFiveHourResetsAt = nextFiveHourReset
             resetScheduler.scheduleFiveHourReset(nextFiveHourReset)
             mainHandler.post {
                 codexConnected = state.optBoolean("codexConnected", false)
@@ -242,14 +323,19 @@ class RemoteBridgeClient(context: Context) {
                 usedPercent = nextUsed
                 remainingPercent = nextRemaining
                 fiveHourRemainingPercent = nextFiveHourRemaining
-                resetsAt = if (state.has("resetsAt") && !state.isNull("resetsAt")) state.optDouble("resetsAt") else null
-                fiveHourResetsAt = if (state.has("fiveHourResetsAt") && !state.isNull("fiveHourResetsAt")) state.optDouble("fiveHourResetsAt") else null
+                resetsAt = nextResetsAt
+                fiveHourResetsAt = nextFiveHourReset
                 pendingApproval = nextApproval
-                completionEventId = nextCompletionEventId
                 activeSessionCount = nextActiveSessionCount
                 if (revealEvent) {
+                    codexRevealReason = revealReason
                     codexRevealEventId += 1
-                    onCodexReveal?.invoke()
+                }
+                if (runningTransition) {
+                    onCodexRunning?.invoke()
+                }
+                if (completionEvent) {
+                    onCodexCompletion?.invoke()
                 }
             }
         }
@@ -312,8 +398,8 @@ class RemoteBridgeClient(context: Context) {
 
     fun requestCodexReveal() {
         mainHandler.post {
+            codexRevealReason = CodexRevealReason.Explicit
             codexRevealEventId += 1
-            onCodexReveal?.invoke()
         }
     }
 
@@ -324,6 +410,11 @@ class RemoteBridgeClient(context: Context) {
     private fun clearRemoteState(nextMessage: String = "Mac을 찾는 중…") {
         lastActivity = null
         lastCompletionEventId = null
+        cachedUsedPercent = null
+        cachedRemainingPercent = null
+        cachedFiveHourRemainingPercent = null
+        cachedResetsAt = null
+        cachedFiveHourResetsAt = null
         mainHandler.post {
             codexConnected = false
             activity = "idle"
@@ -335,9 +426,21 @@ class RemoteBridgeClient(context: Context) {
             resetsAt = null
             fiveHourResetsAt = null
             pendingApproval = null
-            completionEventId = 0
             activeSessionCount = 0
             smartphonePages = buttonPages
+        }
+    }
+
+    private fun preserveActiveStateDuringReconnect() {
+        val active = lastActivity == "running" || lastActivity == "waitingForApproval"
+        if (!active) {
+            clearRemoteState()
+            return
+        }
+        mainHandler.post {
+            codexConnected = false
+            message = "Mac 연결을 재시도하는 중…"
+            commandSucceeded = null
         }
     }
 

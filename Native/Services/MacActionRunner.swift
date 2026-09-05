@@ -7,6 +7,8 @@ enum MacActionError: LocalizedError {
     case shortcutNotConfigured
     case unsupportedShortcut
     case targetAppNotRunning
+    case terminalCommandNotConfigured
+    case terminalCommandFailed
 
     var errorDescription: String? {
         switch self {
@@ -16,13 +18,15 @@ enum MacActionError: LocalizedError {
         case .shortcutNotConfigured: "등록된 단축키가 없습니다."
         case .unsupportedShortcut: "지원하지 않는 단축키 형식입니다."
         case .targetAppNotRunning: "대상 앱이 실행 중이 아닙니다. ‘앱이 꺼져 있으면 실행’ 옵션을 켜세요."
+        case .terminalCommandNotConfigured: "등록된 터미널 명령어가 없습니다."
+        case .terminalCommandFailed: "터미널 명령을 실행하지 못했습니다."
         }
     }
 }
 
 @MainActor
 final class MacActionRunner {
-    func execute(_ action: PadAction) throws -> String {
+    func execute(_ action: PadAction, commandFileID: String? = nil) throws -> String {
         switch action.kind {
         case .app:
             guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: action.value) else { throw MacActionError.appNotFound }
@@ -58,6 +62,11 @@ final class MacActionRunner {
             NSWorkspace.shared.openApplication(at: appURL, configuration: .init())
             scheduleShortcut(action.value, after: 0.65)
             return "앱을 실행한 뒤 단축키를 보냅니다."
+        case .terminalCommand:
+            let command = action.value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !command.isEmpty else { throw MacActionError.terminalCommandNotConfigured }
+            try Self.runTerminalCommand(TerminalCommandFileStore.shellCommand(for: commandFileID ?? "") ?? command)
+            return "터미널 명령을 실행했습니다."
         case .none:
             return "동작이 지정되지 않았습니다."
         }
@@ -71,6 +80,42 @@ final class MacActionRunner {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             try? Self.sendShortcut(label)
         }
+    }
+
+    private static func runTerminalCommand(_ command: String) throws {
+        let scriptSource = terminalAppleScript(for: command)
+        guard let script = NSAppleScript(source: scriptSource) else {
+            throw MacActionError.terminalCommandFailed
+        }
+        var error: NSDictionary?
+        script.executeAndReturnError(&error)
+        if error != nil {
+            throw MacActionError.terminalCommandFailed
+        }
+    }
+
+    static func terminalAppleScript(for command: String) -> String {
+        """
+        tell application "Terminal"
+            if (count of windows) = 0 then
+                reopen
+                repeat until (count of windows) > 0
+                    delay 0.1
+                end repeat
+            end if
+            do script "\(appleScriptEscaped(command))" in front window
+            activate
+        end tell
+        """
+    }
+
+    private static func appleScriptEscaped(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\r\n", with: "\\n")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\n")
     }
 
     private nonisolated static func validateShortcut(_ label: String) throws {

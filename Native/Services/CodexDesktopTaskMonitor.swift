@@ -91,6 +91,23 @@ private final class CodexDesktopTaskMonitorFSEventWatcher: @unchecked Sendable {
     }
 }
 
+private final class CodexDesktopTaskMonitorPollingTimer: @unchecked Sendable {
+    private let timer: Timer
+
+    @MainActor
+    init(tick: @escaping @MainActor @Sendable () -> Void) {
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            Task { @MainActor in tick() }
+        }
+    }
+
+    func cancel() {
+        Task { @MainActor [timer] in
+            timer.invalidate()
+        }
+    }
+}
+
 // All mutable parser/file state is confined to `queue`; only Sendable output
 // values cross back to the main-actor lifecycle wrapper.
 private final class CodexDesktopTaskMonitorWorker: @unchecked Sendable {
@@ -123,7 +140,10 @@ private final class CodexDesktopTaskMonitorWorker: @unchecked Sendable {
 
     private static let replacementAnchorByteCount = 64 * 1_024
     private static let initialMetadataProbeByteCount = 64 * 1_024
-    private static let initialTaskRecoveryLookback: TimeInterval = 24 * 60 * 60
+    // Only recover work that was active immediately around app launch. A
+    // transcript without a terminal event can otherwise make an old task look
+    // active forever and inflate the shared phone task count after relaunch.
+    private static let initialTaskRecoveryLookback: TimeInterval = 15 * 60
 
     private let queue = DispatchQueue(label: "CodexDesktopTaskMonitor.scan", qos: .utility)
     private let sessionsRootURL: URL
@@ -272,9 +292,16 @@ private final class CodexDesktopTaskMonitorWorker: @unchecked Sendable {
             transcripts.removeValue(forKey: url)
             return
         }
-        if restoresInitialTasks {
-            let activeEvents = state.parser.activeTaskIDs
-                .sorted { ($0.transcriptID, $0.turnID) < ($1.transcriptID, $1.turnID) }
+        if restoresInitialTasks, state.parser.restoresActiveTasksOnStartup {
+            // Stable Codex session transcripts contain sequential root turns.
+            // If an interrupted turn has no terminal record, only restore the
+            // newest active turn on startup; later scans still reconcile turns
+            // incrementally through `updateActiveDesktopTasks`.
+            let activeIDs = state.parser.hasStableSessionID
+                ? Array(state.parser.activeTaskIDsInStartOrder.suffix(1))
+                : state.parser.activeTaskIDs
+                    .sorted { ($0.transcriptID, $0.turnID) < ($1.transcriptID, $1.turnID) }
+            let activeEvents = activeIDs
                 .map(DesktopCodexTaskLifecycleEvent.started)
             if !activeEvents.isEmpty { outputs.append(.events(activeEvents)) }
         }
@@ -463,8 +490,8 @@ final class CodexDesktopTaskMonitor {
                 for output in outputs {
                     switch output {
                     case let .events(events):
-                        self.updateActiveDesktopTasks(with: events)
-                        self.onEvents(events)
+                        let reconciledEvents = self.updateActiveDesktopTasks(with: events)
+                        self.onEvents(reconciledEvents)
                     case let .diagnostic(diagnostic): self.onDiagnostic(diagnostic)
                     }
                 }
@@ -472,11 +499,29 @@ final class CodexDesktopTaskMonitor {
         }
     }
 
-    private func updateActiveDesktopTasks(with events: [DesktopCodexTaskLifecycleEvent]) {
+    /// Codex Desktop writes turns sequentially into a root transcript, but an
+    /// interrupted turn may not get a terminal `task_complete`/`turn_aborted`
+    /// record. When a later turn starts in that same transcript, retire any
+    /// older active turns before publishing the new start. This prevents an
+    /// orphaned turn from keeping the shared phone status stuck on running.
+    private func updateActiveDesktopTasks(with events: [DesktopCodexTaskLifecycleEvent]) -> [DesktopCodexTaskLifecycleEvent] {
+        var reconciledEvents: [DesktopCodexTaskLifecycleEvent] = []
+        let activeTasksBeforeBatch = activeDesktopTaskIDs
         for event in events {
             switch event {
-            case let .started(taskID): activeDesktopTaskIDs.insert(taskID)
-            case let .completed(taskID): activeDesktopTaskIDs.remove(taskID)
+            case let .started(taskID):
+                let supersededTaskIDs = activeTasksBeforeBatch
+                    .filter { $0.transcriptID == taskID.transcriptID && $0.turnID != taskID.turnID }
+                    .sorted { ($0.transcriptID, $0.turnID) < ($1.transcriptID, $1.turnID) }
+                for supersededTaskID in supersededTaskIDs {
+                    activeDesktopTaskIDs.remove(supersededTaskID)
+                    reconciledEvents.append(.completed(supersededTaskID))
+                }
+                activeDesktopTaskIDs.insert(taskID)
+                reconciledEvents.append(event)
+            case let .completed(taskID):
+                activeDesktopTaskIDs.remove(taskID)
+                reconciledEvents.append(event)
             }
         }
 
@@ -488,6 +533,7 @@ final class CodexDesktopTaskMonitor {
                 Task { @MainActor in self?.requestScan() }
             }
         }
+        return reconciledEvents
     }
 
     nonisolated private static func discoverRecursively(in root: URL) throws -> [URL] {
@@ -515,13 +561,19 @@ final class CodexDesktopTaskMonitor {
         return urls
     }
 
+    @MainActor
     private static func scheduleDefaultScan(
         watching rootURL: URL,
         _ tick: @escaping @MainActor @Sendable () -> Void
     ) -> CodexDesktopTaskMonitorCancellation {
-        guard let watcher = CodexDesktopTaskMonitorFSEventWatcher(rootURL: rootURL, tick: tick) else {
-            return CodexDesktopTaskMonitorCancellation {}
+        let watcher = CodexDesktopTaskMonitorFSEventWatcher(rootURL: rootURL, tick: tick)
+        // FSEvents is an optimization, not the source of truth. Keep a small
+        // polling fallback so a missed create/append event cannot hide the
+        // beginning of a Codex turn indefinitely.
+        let pollingTimer = CodexDesktopTaskMonitorPollingTimer(tick: tick)
+        return CodexDesktopTaskMonitorCancellation {
+            watcher?.cancel()
+            pollingTimer.cancel()
         }
-        return CodexDesktopTaskMonitorCancellation { watcher.cancel() }
     }
 }

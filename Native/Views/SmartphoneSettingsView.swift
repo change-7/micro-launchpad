@@ -7,6 +7,7 @@ struct SmartphoneSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var pageIndex = 0
     @State private var buttonIndex = 0
+    @State private var dropTargetButtonID: String?
     @State private var registrationError = ""
 
     private let symbolChoices = [
@@ -132,6 +133,10 @@ struct SmartphoneSettingsView: View {
             HStack {
                 Text("\(page.name) · 버튼 선택").font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary)
                 Spacer()
+                Label("드래그로 위치 교환", systemImage: "arrow.left.arrow.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.orange.opacity(0.9))
+                    .help("버튼을 다른 버튼 위로 드래그하면 두 버튼의 위치를 교환합니다.")
                 Text("\(page.buttons.filter { $0.action.kind != .none }.count)/16 동작 지정")
                     .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
             }
@@ -140,7 +145,7 @@ struct SmartphoneSettingsView: View {
                     Button { buttonIndex = index } label: {
                         VStack(spacing: 6) {
                             buttonIcon(for: button, isSelected: index == buttonIndex)
-                            Text(button.title.isEmpty ? "빈 버튼" : button.title)
+                            Text(button.title)
                                 .font(.system(size: 11, weight: .medium))
                                 .lineLimit(1)
                             Text(button.action.kind.title)
@@ -151,8 +156,42 @@ struct SmartphoneSettingsView: View {
                         .padding(7)
                         .background(index == buttonIndex ? Color.orange.opacity(0.15) : Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 9))
                         .overlay(RoundedRectangle(cornerRadius: 9).stroke(index == buttonIndex ? .orange : .white.opacity(0.12), lineWidth: index == buttonIndex ? 1.5 : 1))
+                        .overlay(alignment: .topTrailing) {
+                            Image(systemName: "line.3.horizontal")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.white.opacity(0.38))
+                                .padding(7)
+                        }
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 9)
+                                .stroke(.orange, lineWidth: 2)
+                                .opacity(dropTargetButtonID == button.id ? 1 : 0)
+                        }
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(button.title.isEmpty ? "비어 있는 스마트폰 버튼 슬롯" : button.title)
+                    .accessibilityHint("드래그하여 버튼 위치를 바꿀 수 있습니다.")
+                    .draggable(button.id)
+                    .dropDestination(for: String.self) { items, _ in
+                        guard let sourceID = items.first else { return false }
+                        dropTargetButtonID = nil
+                        guard sourceID != button.id,
+                              store.swapSmartphoneButtonConfigurations(
+                                pageIndex: pageIndex,
+                                from: sourceID,
+                                to: button.id
+                              ) else {
+                            return false
+                        }
+                        buttonIndex = index
+                        return true
+                    } isTargeted: { isTargeted in
+                        if isTargeted {
+                            dropTargetButtonID = button.id
+                        } else if dropTargetButtonID == button.id {
+                            dropTargetButtonID = nil
+                        }
+                    }
                 }
             }
             Spacer()
@@ -175,9 +214,10 @@ struct SmartphoneSettingsView: View {
             field("아이콘 선택") { symbolPicker }
             Divider().overlay(.white.opacity(0.16))
             field("실행 동작") {
-                HStack(spacing: 6) {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
                     actionButton(.app)
                     actionButton(.shortcut)
+                    actionButton(.terminalCommand)
                     actionButton(.url)
                 }
             }
@@ -255,7 +295,7 @@ struct SmartphoneSettingsView: View {
         let appBundleIdentifier: String? = switch button.action.kind {
         case .app: button.action.value
         case .shortcut: button.action.targetAppBundleIdentifier
-        case .url, .none: nil
+        case .terminalCommand, .url, .none: nil
         }
 
         if button.symbol.isEmpty {
@@ -319,6 +359,8 @@ struct SmartphoneSettingsView: View {
             }
         case .shortcut:
             ShortcutComposerView(value: actionValueBinding, targetAppBundleIdentifier: targetAppBinding, launchTargetAppIfNeeded: launchTargetBinding)
+        case .terminalCommand:
+            DarkTextField(text: actionValueBinding, placeholder: "예: open -a Safari")
         case .url:
             DarkTextField(text: actionValueBinding, placeholder: "https://example.com")
         case .none:
@@ -353,7 +395,7 @@ struct SmartphoneSettingsView: View {
     }
 
     private func runSelectedAction() {
-        do { store.statusMessage = try runner.execute(selectedButton.action) }
+        do { store.statusMessage = try runner.execute(selectedButton.action, commandFileID: selectedButton.id) }
         catch { store.statusMessage = error.localizedDescription }
     }
 }

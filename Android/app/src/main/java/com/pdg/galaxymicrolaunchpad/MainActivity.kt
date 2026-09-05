@@ -1,9 +1,15 @@
 package com.pdg.galaxymicrolaunchpad
 
 import android.graphics.BitmapFactory
+import android.app.TimePickerDialog
+import android.content.Intent
+import android.media.AudioAttributes
+import android.media.Ringtone
+import android.media.RingtoneManager
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Base64
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -15,16 +21,20 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
-import androidx.compose.animation.core.Animatable
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -41,9 +51,9 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -51,8 +61,10 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ContentPaste
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Language
@@ -62,6 +74,7 @@ import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Terminal
@@ -71,14 +84,21 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -93,13 +113,16 @@ import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.view.WindowManager
-import kotlin.math.min
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -121,9 +144,11 @@ private const val HorizontalSwipeCommitDistanceDp = 32f
 private const val DefaultHorizontalSwipeCommitDistancePx = HorizontalSwipeCommitDistanceDp
 private const val AppPageTransitionDurationMillis = 150
 private const val AppPageFadeDurationMillis = 100
+private const val ButtonActionRevealSuppressionMillis = 2_500L
 private val ButtonTileIconSize = 36.dp
 private val ButtonTileContentGap = 4.dp
 private val ButtonTileLabelFontSize = 14.sp
+private val MainContentTopPadding = 0.dp
 
 internal fun clampUsagePercent(value: Int?): Int? = value?.coerceIn(0, 100)
 
@@ -205,18 +230,23 @@ internal val buttonPages = defaultButtonPages.mapIndexed { pageIndex, page ->
 class MainActivity : ComponentActivity() {
     private lateinit var remoteBridge: RemoteBridgeClient
     private var completionWakeLock: PowerManager.WakeLock? = null
+    private var completionNotificationRingtone: Ringtone? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        remoteBridge = RemoteBridgeClient(this)
-        remoteBridge.onCodexReveal = ::wakeForCodexReveal
+        remoteBridge = RemoteBridgeRuntime.client(this)
+        remoteBridge.onCodexCompletion = ::wakeForCodexCompletion
+        remoteBridge.onCodexRunning = ::wakeForCodexRunning
+        ContextCompat.startForegroundService(
+            this,
+            Intent(this, RemoteBridgeService::class.java).setAction(RemoteBridgeService.ACTION_START)
+        )
         WindowCompat.setDecorFitsSystemWindows(window, false)
         WindowInsetsControllerCompat(window, window.decorView).apply {
             hide(WindowInsetsCompat.Type.systemBars())
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
         setContent { GalaxyMicroLaunchpadApp(remoteBridge) }
-        remoteBridge.start()
         if (intent.getBooleanExtra(CodexResetScheduler.EXTRA_REVEAL_CODEX, false)) {
             remoteBridge.requestCodexReveal()
         }
@@ -231,17 +261,26 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        remoteBridge.onCodexReveal = null
-        remoteBridge.stop()
-        completionWakeLock?.let { wakeLock ->
-            if (wakeLock.isHeld) wakeLock.release()
-        }
-        completionWakeLock = null
+        remoteBridge.onCodexCompletion = null
+        remoteBridge.onCodexRunning = null
+        releaseCompletionWakeLock()
+        stopCompletionNotificationSound()
         super.onDestroy()
     }
 
     @Suppress("DEPRECATION")
-    private fun wakeForCodexReveal() {
+    private fun wakeForCodexCompletion() {
+        playCompletionNotificationSound()
+        wakeScreenForCodex()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun wakeForCodexRunning() {
+        wakeScreenForCodex()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun wakeScreenForCodex() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
@@ -253,34 +292,113 @@ class MainActivity : ComponentActivity() {
         }
 
         val powerManager = getSystemService(PowerManager::class.java)
-        if (!powerManager.isInteractive) {
-            completionWakeLock?.let { wakeLock ->
-                if (wakeLock.isHeld) wakeLock.release()
-            }
-            val wakeLock = powerManager.newWakeLock(
-                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
-                "$packageName:codex-completion"
-            ).apply {
-                setReferenceCounted(false)
-                acquire(5_000L)
-            }
-            completionWakeLock = wakeLock
-            window.decorView.postDelayed({
-                if (wakeLock.isHeld) wakeLock.release()
-                if (completionWakeLock === wakeLock) completionWakeLock = null
-            }, 5_500L)
+        if (!shouldWakeForCodex(powerManager.isInteractive)) {
+            return
         }
+        releaseCompletionWakeLock()
+        val wakeLock = powerManager.newWakeLock(
+            PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+            "$packageName:codex-completion"
+        ).apply {
+            setReferenceCounted(false)
+            acquire(CodexCompletionWakeDurationMillis)
+        }
+        completionWakeLock = wakeLock
+        window.decorView.postDelayed({
+            if (wakeLock.isHeld) wakeLock.release()
+            if (completionWakeLock === wakeLock) completionWakeLock = null
+        }, CodexCompletionWakeDurationMillis + 500L)
     }
+
+    private fun playCompletionNotificationSound() {
+        stopCompletionNotificationSound()
+        val soundUri = RingtoneManager.getDefaultUri(completionNotificationSoundType()) ?: return
+        val ringtone = RingtoneManager.getRingtone(this, soundUri) ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            ringtone.audioAttributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+        }
+        ringtone.play()
+        completionNotificationRingtone = ringtone
+    }
+
+    private fun stopCompletionNotificationSound() {
+        completionNotificationRingtone?.stop()
+        completionNotificationRingtone = null
+    }
+
+    private fun releaseCompletionWakeLock() {
+        completionWakeLock?.let { wakeLock ->
+            if (wakeLock.isHeld) wakeLock.release()
+        }
+        completionWakeLock = null
+    }
+
 }
 
 @Composable
 private fun GalaxyMicroLaunchpadApp(remoteBridge: RemoteBridgeClient) {
+    val context = LocalContext.current
+    val view = LocalView.current
+    val preferences = remember(context) { RemoteBridgePreferences(context) }
     var page by remember { mutableStateOf(AppPage.Controls) }
     var buttonPageIndex by rememberSaveable { mutableStateOf(0) }
+    var suppressCodexRevealUntilElapsedMillis by remember { mutableStateOf(0L) }
+    var showConnectionSettings by rememberSaveable { mutableStateOf(false) }
+    var idleBlackoutEnabled by rememberSaveable { mutableStateOf(preferences.idleBlackoutEnabled) }
+    var blackoutVisible by remember { mutableStateOf(false) }
+    var lastInteractionElapsedMillis by remember { mutableStateOf(SystemClock.elapsedRealtime()) }
     var localMessage by remember { mutableStateOf("Mac을 찾는 중…") }
-    LaunchedEffect(remoteBridge.codexRevealEventId) {
-        if (remoteBridge.codexRevealEventId > 0) {
+    val markInteraction = {
+        lastInteractionElapsedMillis = SystemClock.elapsedRealtime()
+        blackoutVisible = false
+    }
+    LaunchedEffect(idleBlackoutEnabled) {
+        blackoutVisible = false
+        while (true) {
+            delay(1_000L)
+            if (shouldEnterIdleBlackout(
+                    enabled = idleBlackoutEnabled,
+                    nowElapsedMillis = SystemClock.elapsedRealtime(),
+                    lastInteractionElapsedMillis = lastInteractionElapsedMillis
+                )) {
+                blackoutVisible = true
+            }
+        }
+    }
+    DisposableEffect(view, idleBlackoutEnabled) {
+        view.keepScreenOn = idleBlackoutEnabled
+        onDispose {
+            view.keepScreenOn = false
+        }
+    }
+    LaunchedEffect(
+        remoteBridge.codexRevealEventId,
+        remoteBridge.codexRevealReason,
+        remoteBridge.activity,
+        remoteBridge.commandSucceeded,
+        remoteBridge.fiveHourRemainingPercent,
+        remoteBridge.remainingPercent,
+        remoteBridge.connectionState,
+        remoteBridge.codexConnected,
+        remoteBridge.pendingApproval
+    ) {
+        if (remoteBridge.codexRevealEventId > 0
+            && shouldAutoRevealCodexPage(
+                reason = remoteBridge.codexRevealReason,
+                nowElapsedMillis = SystemClock.elapsedRealtime(),
+                suppressUntilElapsedMillis = suppressCodexRevealUntilElapsedMillis
+            )
+        ) {
             page = AppPage.Codex
+        }
+        if (remoteBridge.codexRevealEventId > 0
+            || normalizeRemoteActivity(remoteBridge.activity) != "idle"
+            || remoteBridge.commandSucceeded != null
+        ) {
+            markInteraction()
         }
     }
     val headerMessage = if (remoteBridge.connectionState == RemoteConnectionState.Connected) {
@@ -289,60 +407,50 @@ private fun GalaxyMicroLaunchpadApp(remoteBridge: RemoteBridgeClient) {
         localMessage
     }
     var horizontalDrag by remember { mutableStateOf(0f) }
-    var swipeCommitted by remember { mutableStateOf(false) }
     var pageTransitionDirection by remember { mutableStateOf(1) }
     val swipeCommitDistancePx = horizontalSwipeCommitDistancePx(LocalDensity.current.density)
+    val currentPage by rememberUpdatedState(page)
+    val currentSwipeCommitDistancePx by rememberUpdatedState(swipeCommitDistancePx)
 
     Surface(color = Black, modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing)
                 .windowInsetsPadding(WindowInsets.navigationBars)
-                .pointerInput(page) {
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (event.changes.any { it.changedToDown() }) markInteraction()
+                        }
+                    }
+                }
+                .pointerInput(Unit) {
                     detectHorizontalDragGestures(
                         onHorizontalDrag = { change, dragAmount ->
                             change.consume()
                             horizontalDrag += dragAmount
-                            if (!swipeCommitted && kotlin.math.abs(horizontalDrag) >= swipeCommitDistancePx) {
-                                val currentIndex = AppPage.entries.indexOf(page)
-                                val nextIndex = horizontalSwipeTarget(
-                                    currentIndex = currentIndex,
-                                    pageCount = AppPage.entries.size,
-                                    dragDistance = horizontalDrag,
-                                    commitDistancePx = swipeCommitDistancePx
-                                )
-                                if (nextIndex != currentIndex) {
-                                    pageTransitionDirection = horizontalSwipeTransitionDirection(horizontalDrag)
-                                    page = AppPage.entries[nextIndex]
-                                    swipeCommitted = true
-                                }
-                            }
                         },
                         onDragEnd = {
-                            if (!swipeCommitted) {
-                                val currentIndex = AppPage.entries.indexOf(page)
-                                val nextIndex = horizontalSwipeTarget(
-                                    currentIndex = currentIndex,
-                                    pageCount = AppPage.entries.size,
-                                    dragDistance = horizontalDrag,
-                                    commitDistancePx = swipeCommitDistancePx
-                                )
-                                if (nextIndex != currentIndex) {
-                                    pageTransitionDirection = horizontalSwipeTransitionDirection(horizontalDrag)
-                                    page = AppPage.entries[nextIndex]
-                                }
+                            val currentIndex = AppPage.entries.indexOf(currentPage)
+                            val nextIndex = horizontalSwipeTarget(
+                                currentIndex = currentIndex,
+                                pageCount = AppPage.entries.size,
+                                dragDistance = horizontalDrag,
+                                commitDistancePx = currentSwipeCommitDistancePx
+                            )
+                            if (nextIndex != currentIndex) {
+                                pageTransitionDirection = horizontalSwipeTransitionDirection(horizontalDrag)
+                                page = AppPage.entries[nextIndex]
                             }
                             horizontalDrag = 0f
-                            swipeCommitted = false
                         },
                         onDragCancel = {
                             horizontalDrag = 0f
-                            swipeCommitted = false
                         }
                     )
                 }
-        ) {
+            ) {
             Header(
                 message = headerMessage,
                 messageColor = when (remoteBridge.commandSucceeded) {
@@ -351,6 +459,7 @@ private fun GalaxyMicroLaunchpadApp(remoteBridge: RemoteBridgeClient) {
                     null -> TextMuted
                 },
                 connectionState = remoteBridge.connectionState,
+                activity = remoteBridge.activity,
                 fiveHourRemaining = remoteBridge.fiveHourRemainingPercent,
                 weeklyRemaining = remoteBridge.remainingPercent
             )
@@ -373,7 +482,10 @@ private fun GalaxyMicroLaunchpadApp(remoteBridge: RemoteBridgeClient) {
                             pages = remoteBridge.smartphonePages,
                             pageIndex = buttonPageIndex,
                             onPageChange = { buttonPageIndex = it },
+                            onConnectionSettings = { showConnectionSettings = true },
                             onAction = { action ->
+                                suppressCodexRevealUntilElapsedMillis =
+                                    SystemClock.elapsedRealtime() + ButtonActionRevealSuppressionMillis
                                 if (action.command == "smartphoneButton") {
                                     remoteBridge.sendSmartphoneButton(action)
                                 } else {
@@ -397,6 +509,34 @@ private fun GalaxyMicroLaunchpadApp(remoteBridge: RemoteBridgeClient) {
                 }
             )
         }
+        if (idleBlackoutEnabled && blackoutVisible) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Black)
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false)
+                            markInteraction()
+                        }
+                    }
+            ) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 18.dp, bottom = 18.dp)
+                        .size(8.dp)
+                        .background(Green, CircleShape)
+                )
+            }
+        }
+        if (showConnectionSettings) {
+            BridgeConnectionSettingsDialog(
+                idleBlackoutEnabled = idleBlackoutEnabled,
+                onIdleBlackoutEnabledChanged = { idleBlackoutEnabled = it },
+                onDismiss = { showConnectionSettings = false }
+            )
+        }
     }
 }
 
@@ -405,55 +545,281 @@ private fun Header(
     message: String,
     messageColor: Color,
     connectionState: RemoteConnectionState,
+    activity: String,
     fiveHourRemaining: Int?,
     weeklyRemaining: Int?
 ) {
-    Row(
+    val isCodexRunning = normalizeRemoteActivity(activity) == "running"
+    val pulse = rememberInfiniteTransition(label = "codex-header-pulse")
+    val pulseProgress by pulse.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "codex-header-pulse-progress"
+    )
+    val statusColor = if (isCodexRunning) {
+        Green.copy(alpha = codexHeaderPulseAlpha(activity, pulseProgress))
+    } else {
+        messageColor
+    }
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(58.dp)
+            .height(32.dp)
             .padding(horizontal = 20.dp),
-        verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
+        Row(
             modifier = Modifier
-                .size(10.dp)
-                .background(
-                    if (connectionState == RemoteConnectionState.Connected) Green else TextMuted,
-                    RoundedCornerShape(50)
-                )
-        )
-        Spacer(Modifier.width(12.dp))
-        Text(
-            when (connectionState) {
-                RemoteConnectionState.Connected -> "Mac connected"
-                RemoteConnectionState.Connecting -> "Connecting to Mac"
-                RemoteConnectionState.Searching -> "Searching for Mac"
-                RemoteConnectionState.Disconnected -> "Mac disconnected"
-            },
-            color = TextPrimary,
-            fontSize = 16.sp
-        )
-        Spacer(Modifier.width(18.dp))
-        Text(
-            message,
-            color = messageColor,
-            fontSize = 14.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .weight(1f)
-                .padding(end = 12.dp)
-        )
-        UsageMeter(label = "5시간", remainingPercent = fiveHourRemaining, accent = GaugeCool)
-        Spacer(Modifier.width(10.dp))
-        UsageMeter(label = "주간", remainingPercent = weeklyRemaining, accent = GaugeHigh)
-        Spacer(Modifier.width(10.dp))
-        IconButton(onClick = {}, modifier = Modifier.size(34.dp)) {
-            Icon(Icons.Outlined.Wifi, contentDescription = "Connection", tint = TextMuted)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .background(
+                        if (connectionState == RemoteConnectionState.Connected) Green else TextMuted,
+                        RoundedCornerShape(50)
+                    )
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(
+                when (connectionState) {
+                    RemoteConnectionState.Connected -> "Mac connected"
+                    RemoteConnectionState.Connecting -> "Connecting to Mac"
+                    RemoteConnectionState.Searching -> "Searching for Mac"
+                    RemoteConnectionState.Disconnected -> "Mac disconnected"
+                },
+                color = TextPrimary,
+                fontSize = 16.sp
+            )
+            Spacer(Modifier.width(18.dp))
+            if (isCodexRunning) {
+                RunningStatusIndicator(color = Green)
+                Spacer(Modifier.width(8.dp))
+            }
+            Text(
+                message,
+                color = statusColor,
+                fontSize = 14.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 12.dp)
+            )
+            UsageMeter(label = "5시간", remainingPercent = fiveHourRemaining, accent = GaugeCool)
+            Spacer(Modifier.width(10.dp))
+            UsageMeter(label = "주간", remainingPercent = weeklyRemaining, accent = GaugeHigh)
         }
     }
 }
+
+/**
+ * A compact, always-mounted working indicator. The header is shared by both
+ * app pages, so the running motion stays visible even when the user is on the
+ * button page instead of the full Codex status page.
+ */
+@Composable
+private fun RunningStatusIndicator(color: Color) {
+    val motion = rememberInfiniteTransition(label = "codex-running-header-indicator")
+    val rotation by motion.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "codex-running-header-rotation"
+    )
+    val pulse by motion.animateFloat(
+        initialValue = 0.55f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(850),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "codex-running-header-pulse"
+    )
+    Canvas(modifier = Modifier.size(18.dp)) {
+        val center = Offset(size.width / 2f, size.height / 2f)
+        val radius = size.minDimension * 0.28f
+        drawCircle(color = color.copy(alpha = 0.16f * pulse), radius = radius * 1.8f, center = center)
+        rotate(rotation, center) {
+            drawArc(
+                color = color,
+                startAngle = -65f,
+                sweepAngle = 235f,
+                useCenter = false,
+                style = Stroke(width = size.minDimension * 0.14f, cap = StrokeCap.Round)
+            )
+        }
+        drawCircle(color = color, radius = radius * 0.72f, center = center)
+    }
+}
+
+@Composable
+private fun BridgeConnectionSettingsDialog(
+    idleBlackoutEnabled: Boolean,
+    onIdleBlackoutEnabledChanged: (Boolean) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val preferences = remember { RemoteBridgePreferences(context) }
+    var selectedKey by remember { mutableStateOf(preferences.screenOffOptionKey) }
+    var sleepWindowEnabled by remember { mutableStateOf(preferences.sleepWindowEnabled) }
+    var sleepWindowStart by remember { mutableStateOf(preferences.sleepWindowStartMinutes) }
+    var sleepWindowEnd by remember { mutableStateOf(preferences.sleepWindowEndMinutes) }
+    var draftIdleBlackoutEnabled by remember { mutableStateOf(idleBlackoutEnabled) }
+    val selectedMinutes = selectedKey.removeSuffix("m").toIntOrNull()
+        ?.coerceIn(MinScreenOffTimeoutMinutes, MaxScreenOffTimeoutMinutes)
+        ?: 30
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Tile,
+        titleContentColor = TextPrimary,
+        textContentColor = TextPrimary,
+        title = { Text("화면 꺼짐 연결 유지", color = TextPrimary) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            if (selectedKey == "always") selectedKey = "30m"
+                        },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = selectedKey != "always",
+                        onClick = { selectedKey = "${selectedMinutes}m" }
+                    )
+                    Text("제한 시간", color = TextPrimary, fontSize = 14.sp)
+                    Spacer(Modifier.width(8.dp))
+                    IconButton(
+                        onClick = {
+                            val next = (selectedMinutes - ScreenOffTimeoutStepMinutes)
+                                .coerceAtLeast(MinScreenOffTimeoutMinutes)
+                            selectedKey = "${next}m"
+                        },
+                        enabled = selectedKey != "always" && selectedMinutes > MinScreenOffTimeoutMinutes,
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        Icon(Icons.Outlined.Remove, contentDescription = "시간 줄이기", tint = TextPrimary)
+                    }
+                    Text("${selectedMinutes}분", color = TextPrimary, fontSize = 14.sp)
+                    IconButton(
+                        onClick = {
+                            val next = (selectedMinutes + ScreenOffTimeoutStepMinutes)
+                                .coerceAtMost(MaxScreenOffTimeoutMinutes)
+                            selectedKey = "${next}m"
+                        },
+                        enabled = selectedKey != "always" && selectedMinutes < MaxScreenOffTimeoutMinutes,
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        Icon(Icons.Outlined.Add, contentDescription = "시간 늘리기", tint = TextPrimary)
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { selectedKey = "always" },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = selectedKey == "always",
+                        onClick = { selectedKey = "always" }
+                    )
+                    Text("계속 유지", color = TextPrimary, fontSize = 14.sp)
+                }
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("대기 시 블랙 화면", color = TextPrimary, fontSize = 14.sp)
+                    Spacer(Modifier.weight(1f))
+                    Switch(
+                        checked = draftIdleBlackoutEnabled,
+                        onCheckedChange = { draftIdleBlackoutEnabled = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Black,
+                            checkedTrackColor = Green,
+                            checkedBorderColor = Green,
+                            uncheckedThumbColor = TextMuted,
+                            uncheckedTrackColor = Tile,
+                            uncheckedBorderColor = TextMuted
+                        )
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                Text("절전 시간대", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(
+                        selected = sleepWindowEnabled,
+                        onClick = { sleepWindowEnabled = !sleepWindowEnabled }
+                    )
+                    Text("사용", color = TextPrimary, fontSize = 14.sp)
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(
+                        enabled = sleepWindowEnabled,
+                        onClick = {
+                            val initial = minutesToClock(sleepWindowStart)
+                            TimePickerDialog(context, { _, hour, minute ->
+                                sleepWindowStart = hour * 60 + minute
+                            }, initial.first, initial.second, true).show()
+                        }
+                    ) { Text(formatClockMinutes(sleepWindowStart), color = if (sleepWindowEnabled) GaugeHigh else TextMuted) }
+                    Text(" ~ ", color = TextMuted)
+                    TextButton(
+                        enabled = sleepWindowEnabled,
+                        onClick = {
+                            val initial = minutesToClock(sleepWindowEnd)
+                            TimePickerDialog(context, { _, hour, minute ->
+                                sleepWindowEnd = hour * 60 + minute
+                            }, initial.first, initial.second, true).show()
+                        }
+                    ) { Text(formatClockMinutes(sleepWindowEnd), color = if (sleepWindowEnabled) GaugeHigh else TextMuted) }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    preferences.screenOffOptionKey = selectedKey
+                    preferences.idleBlackoutEnabled = draftIdleBlackoutEnabled
+                    preferences.sleepWindowEnabled = sleepWindowEnabled
+                    preferences.sleepWindowStartMinutes = sleepWindowStart
+                    preferences.sleepWindowEndMinutes = sleepWindowEnd
+                    context.sendBroadcast(
+                        Intent(RemoteBridgeService.ACTION_TIMEOUT_CHANGED)
+                            .setPackage(context.packageName)
+                    )
+                    onIdleBlackoutEnabledChanged(draftIdleBlackoutEnabled)
+                    onDismiss()
+                }
+            ) {
+                Text("저장", color = GaugeHigh)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("취소", color = TextMuted)
+            }
+        }
+    )
+}
+
+private fun minutesToClock(minutes: Int): Pair<Int, Int> = minutes / 60 to minutes % 60
+
+private fun formatClockMinutes(minutes: Int): String = "%02d:%02d".format(Locale.US, minutes / 60, minutes % 60)
 
 @Composable
 private fun UsageMeter(label: String, remainingPercent: Int?, accent: Color) {
@@ -497,13 +863,14 @@ private fun ControlsPage(
     pages: List<ButtonPage>,
     pageIndex: Int,
     onPageChange: (Int) -> Unit,
+    onConnectionSettings: () -> Unit,
     onAction: (ControlAction) -> Unit
 ) {
     var verticalDrag by remember { mutableStateOf(0f) }
     Row(
         modifier = Modifier
             .fillMaxSize()
-            .padding(start = 20.dp, top = 12.dp, end = 20.dp, bottom = 4.dp)
+            .padding(start = 20.dp, top = MainContentTopPadding, end = 20.dp, bottom = 4.dp)
     ) {
         Column(
             modifier = Modifier
@@ -523,8 +890,12 @@ private fun ControlsPage(
                 )
             }
             Spacer(Modifier.weight(1f))
-            Text("Swipe ↑ / ↓", color = TextMuted, fontSize = 12.sp)
-            Text("to change page", color = TextMuted, fontSize = 12.sp)
+            IconButton(
+                onClick = onConnectionSettings,
+                modifier = Modifier.size(44.dp)
+            ) {
+                Icon(Icons.Outlined.Settings, contentDescription = "연결 설정", tint = TextMuted)
+            }
         }
         BoxWithConstraints(
             modifier = Modifier
@@ -643,7 +1014,11 @@ private fun ActionTile(action: ControlAction, tileHeight: androidx.compose.ui.un
 
 @Composable
 private fun CodexStatusPage(remoteBridge: RemoteBridgeClient) {
-    val activityTitle = when (remoteBridge.activity) {
+    // Keep rendering defensive for older bridge payloads or a state replay
+    // received while reconnecting. The client normally normalizes this value,
+    // but the UI must never fall back to the idle branch for an active alias.
+    val activity = normalizeRemoteActivity(remoteBridge.activity)
+    val activityTitle = when (activity) {
         "connecting" -> "CONNECTING"
         "running" -> "RUNNING"
         "waitingForApproval" -> "WAITING FOR APPROVAL"
@@ -651,7 +1026,7 @@ private fun CodexStatusPage(remoteBridge: RemoteBridgeClient) {
         "failed" -> "FAILED"
         else -> "IDLE"
     }
-    val activityColor = when (remoteBridge.activity) {
+    val activityColor = when (activity) {
         "failed" -> Red
         "waitingForApproval" -> GaugeMid
         "running" -> Green
@@ -660,17 +1035,11 @@ private fun CodexStatusPage(remoteBridge: RemoteBridgeClient) {
     }
     val fiveHourRemaining = remoteBridge.fiveHourRemainingPercent
     val weeklyRemaining = remoteBridge.remainingPercent
-    var desktopCompletionPulse by remember { mutableStateOf(false) }
-    LaunchedEffect(remoteBridge.completionEventId) {
-        if (remoteBridge.completionEventId > 0) {
-            desktopCompletionPulse = true
-            delay(1_800L)
-            desktopCompletionPulse = false
-        }
-    }
-    val motionActivity = if (desktopCompletionPulse) "completed" else remoteBridge.activity
-    val motionColor = if (desktopCompletionPulse) GaugeHigh else activityColor
-    Row(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 18.dp)) {
+    Row(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(start = 20.dp, top = MainContentTopPadding, end = 20.dp, bottom = 18.dp)
+    ) {
         Column(
             modifier = Modifier.width(300.dp).fillMaxHeight(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -723,51 +1092,52 @@ private fun CodexStatusPage(remoteBridge: RemoteBridgeClient) {
             }
             Spacer(Modifier.height(24.dp))
         }
-        Column(
+        Box(
             modifier = Modifier.weight(1f).fillMaxHeight().padding(horizontal = 28.dp)
         ) {
-            Text("Codex status", color = TextMuted, fontSize = 13.sp)
-            Spacer(Modifier.height(16.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                StatusMotion(
-                    activity = motionActivity,
-                    color = motionColor,
-                    motionEventId = remoteBridge.completionEventId
-                )
-                Spacer(Modifier.width(18.dp))
-                Column {
-                    Text(activityTitle, color = activityColor, fontSize = 34.sp, fontWeight = FontWeight.Medium)
-                    Text(remoteBridge.message, color = TextPrimary, fontSize = 20.sp, maxLines = 1)
+            Column(modifier = Modifier.fillMaxSize()) {
+                Text("Codex status", color = TextMuted, fontSize = 13.sp)
+                Spacer(Modifier.height(16.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    StatusMotion(
+                        activity = activity,
+                        color = activityColor
+                    )
+                    Spacer(Modifier.width(18.dp))
+                    Column {
+                        Text(activityTitle, color = activityColor, fontSize = 34.sp, fontWeight = FontWeight.Medium)
+                        Text(remoteBridge.message, color = TextPrimary, fontSize = 20.sp, maxLines = 1)
+                    }
                 }
+                remoteBridge.pendingApproval?.let { approval ->
+                    Spacer(Modifier.height(14.dp))
+                    ApprovalPrompt(
+                        approval = approval,
+                        onDecision = remoteBridge::sendCodexApproval
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    UsageGauge(
+                        label = "5-hour remaining",
+                        remaining = fiveHourRemaining
+                    )
+                    UsageGauge(
+                        label = "1-week remaining",
+                        remaining = weeklyRemaining
+                    )
+                }
+                Spacer(Modifier.weight(0.65f))
+                Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+                    StatusLine(
+                        "Mac bridge",
+                        if (remoteBridge.connectionState == RemoteConnectionState.Connected) Green else TextMuted
+                    )
+                    StatusLine("Codex App Server", if (remoteBridge.codexConnected) Green else TextMuted)
+                    StatusLine("Activity: $activityTitle", activityColor)
+                }
+                Spacer(Modifier.height(18.dp))
             }
-            remoteBridge.pendingApproval?.let { approval ->
-                Spacer(Modifier.height(14.dp))
-                ApprovalPrompt(
-                    approval = approval,
-                    onDecision = remoteBridge::sendCodexApproval
-                )
-            }
-            Spacer(Modifier.weight(1f))
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                UsageGauge(
-                    label = "5-hour remaining",
-                    remaining = fiveHourRemaining
-                )
-                UsageGauge(
-                    label = "1-week remaining",
-                    remaining = weeklyRemaining
-                )
-            }
-            Spacer(Modifier.weight(0.65f))
-            Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
-                StatusLine(
-                    "Mac bridge",
-                    if (remoteBridge.connectionState == RemoteConnectionState.Connected) Green else TextMuted
-                )
-                StatusLine("Codex App Server", if (remoteBridge.codexConnected) Green else TextMuted)
-                StatusLine("Activity: $activityTitle", activityColor)
-            }
-            Spacer(Modifier.height(18.dp))
         }
     }
 }
@@ -828,8 +1198,9 @@ private fun ApprovalPrompt(
 }
 
 @Composable
-private fun StatusMotion(activity: String, color: Color, motionEventId: Int = 0) {
-    val motion = rememberInfiniteTransition(label = "codex-status-$activity")
+private fun StatusMotion(activity: String, color: Color) {
+    val normalizedActivity = normalizeRemoteActivity(activity)
+    val motion = rememberInfiniteTransition(label = "codex-status-$normalizedActivity")
     val rotation by motion.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
@@ -848,20 +1219,10 @@ private fun StatusMotion(activity: String, color: Color, motionEventId: Int = 0)
         animationSpec = infiniteRepeatable(tween(150), RepeatMode.Reverse),
         label = "status-shake"
     )
-    val checkProgress = remember { Animatable(0f) }
-    LaunchedEffect(activity, motionEventId) {
-        if (activity == "completed") {
-            checkProgress.snapTo(0f)
-            checkProgress.animateTo(1f, animationSpec = tween(520))
-        } else {
-            checkProgress.snapTo(0f)
-        }
-    }
-
     Canvas(modifier = Modifier.size(64.dp)) {
         val center = Offset(size.width / 2f, size.height / 2f)
         val radius = size.minDimension * 0.27f
-        when (activity) {
+        when (normalizedActivity) {
             "running" -> {
                 rotate(rotation, center) {
                     drawArc(
@@ -885,10 +1246,9 @@ private fun StatusMotion(activity: String, color: Color, motionEventId: Int = 0)
                 drawCircle(color = color.copy(alpha = 0.85f), radius = radius * 0.5f, center = center)
             }
             "completed" -> {
-                val progress = checkProgress.value
                 drawCircle(
-                    color = color.copy(alpha = (1f - progress) * 0.45f),
-                    radius = radius * (1.15f + progress * 0.3f),
+                    color = color.copy(alpha = 0.25f),
+                    radius = radius * 1.15f,
                     center = center,
                     style = Stroke(width = size.minDimension * 0.04f)
                 )
@@ -896,14 +1256,8 @@ private fun StatusMotion(activity: String, color: Color, motionEventId: Int = 0)
                 val start = Offset(center.x - radius * 0.52f, center.y)
                 val middle = Offset(center.x - radius * 0.1f, center.y + radius * 0.42f)
                 val end = Offset(center.x + radius * 0.62f, center.y - radius * 0.45f)
-                val first = min(progress / 0.45f, 1f)
-                val second = ((progress - 0.45f) / 0.55f).coerceIn(0f, 1f)
-                if (first > 0f) {
-                    drawLine(start = start, end = lerpOffset(start, middle, first), color = color, strokeWidth = size.minDimension * 0.07f, cap = StrokeCap.Round)
-                }
-                if (second > 0f) {
-                    drawLine(start = middle, end = lerpOffset(middle, end, second), color = color, strokeWidth = size.minDimension * 0.07f, cap = StrokeCap.Round)
-                }
+                drawLine(start = start, end = middle, color = color, strokeWidth = size.minDimension * 0.07f, cap = StrokeCap.Round)
+                drawLine(start = middle, end = end, color = color, strokeWidth = size.minDimension * 0.07f, cap = StrokeCap.Round)
             }
             "failed" -> {
                 translate(left = shake) {
@@ -922,13 +1276,6 @@ private fun StatusMotion(activity: String, color: Color, motionEventId: Int = 0)
             else -> drawCircle(color = color, radius = radius * 0.72f, center = center)
         }
     }
-}
-
-private fun lerpOffset(start: Offset, end: Offset, fraction: Float): Offset {
-    return Offset(
-        x = start.x + (end.x - start.x) * fraction,
-        y = start.y + (end.y - start.y) * fraction
-    )
 }
 
 @Composable

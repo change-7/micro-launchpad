@@ -119,7 +119,7 @@ final class CodexEventReducerTests: XCTestCase {
         XCTAssertEqual(presentation.automaticStopDelay, 9)
     }
 
-    func testCodexMotionPresentation_whenDecodingLegacyTimedRunningRule_keepsTimedBehavior() throws {
+    func testCodexMotionPresentation_whenDecodingLegacyTimedRunningRule_keepsLiveWorkHeld() throws {
         // Given
         let data = Data("""
         {
@@ -134,7 +134,7 @@ final class CodexEventReducerTests: XCTestCase {
         let presentation = try JSONDecoder().decode(CodexMotionPresentation.self, from: data)
 
         // Then
-        XCTAssertEqual(presentation.automaticStopDelay(for: .running), 9)
+        XCTAssertNil(presentation.automaticStopDelay(for: .running))
     }
 
     func testCodexMotionPresentation_whenRunningRuleIsHeld_skipsOnlyLiveAutomaticStop() {
@@ -156,7 +156,7 @@ final class CodexEventReducerTests: XCTestCase {
         XCTAssertEqual(previewStopDelay, 9)
     }
 
-    func testCodexMotionPresentation_whenRunningRuleIsNotHeld_remainsTimed() {
+    func testCodexMotionPresentation_whenRunningRuleIsNotHeld_stillHoldsLiveWork() {
         // Given
         let presentation = CodexMotionPresentation(
             presetID: nil,
@@ -170,7 +170,13 @@ final class CodexEventReducerTests: XCTestCase {
         let liveStopDelay = presentation.automaticStopDelay(for: .running)
 
         // Then
-        XCTAssertEqual(liveStopDelay, 9)
+        XCTAssertNil(liveStopDelay)
+    }
+
+    func testCodexMotionPresentation_whenWaitingForApproval_holdsUntilTerminalState() {
+        let presentation = CodexMotionPresentation(durationSeconds: 9)
+
+        XCTAssertNil(presentation.automaticStopDelay(for: .waitingForApproval))
     }
 
     func testCodexMotionPresentation_whenHeldRunningRuleUsesAnyPadDismissal_stillEndsOnManualPadPress() {
@@ -215,6 +221,28 @@ final class CodexEventReducerTests: XCTestCase {
 
         XCTAssertTrue(page.clearGridPadConfiguration("grid_0_0"))
         XCTAssertEqual(page.pads, [Pad(id: "grid_0_0")])
+    }
+
+    func testSmartphoneButtonSwap_movesConfigurationWithoutMovingPhysicalIDs() {
+        var page = SmartphonePage(
+            id: "smartphone_page_0",
+            name: "PAGE 01",
+            buttons: [
+                SmartphoneButton(id: "smartphone_page_0_button_0", title: "실행", symbol: "play.fill", action: PadAction(kind: .shortcut, value: "cmd+r")),
+                SmartphoneButton(id: "smartphone_page_0_button_1", title: "브라우저", symbol: "globe", action: PadAction(kind: .url, value: "https://example.com"))
+            ]
+        )
+
+        XCTAssertTrue(page.swapButtonConfigurations(
+            from: "smartphone_page_0_button_0",
+            to: "smartphone_page_0_button_1"
+        ))
+        XCTAssertEqual(page.buttons[0].id, "smartphone_page_0_button_0")
+        XCTAssertEqual(page.buttons[0].title, "브라우저")
+        XCTAssertEqual(page.buttons[0].action.kind, .url)
+        XCTAssertEqual(page.buttons[1].id, "smartphone_page_0_button_1")
+        XCTAssertEqual(page.buttons[1].title, "실행")
+        XCTAssertEqual(page.buttons[1].action.kind, .shortcut)
     }
 
     func testMotionPresetRename_trimsAndPersistsTheNewName() {

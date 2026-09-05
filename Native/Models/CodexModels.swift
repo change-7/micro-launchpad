@@ -71,12 +71,30 @@ struct DesktopCodexTaskParser {
     static let maximumIncompleteRecordByteCount = 256 * 1_024
 
     let transcriptID: String
+    private var sessionID: String?
+    private var transcriptInstanceID: String?
     private var bufferedData = Data()
     private var isDiscardingOverlongRecord = false
     private var transcriptIsEligible: Bool?
     private(set) var activeTaskIDs: Set<DesktopCodexTaskID> = []
     private var completedTaskIDs: Set<DesktopCodexTaskID> = []
+    private var activeTaskStartOrder: [DesktopCodexTaskID] = []
     private(set) var discardedOverlongRecordCount = 0
+
+    /// A session ID from `session_meta` is stable across rollout copies and
+    /// lets the monitor safely treat turns in that transcript as sequential.
+    var hasStableSessionID: Bool { sessionID != nil }
+
+    /// Only the canonical root transcript is authoritative when restoring
+    /// active work. Child rollout copies can omit the later completion record.
+    var restoresActiveTasksOnStartup: Bool {
+        guard let sessionID, let transcriptInstanceID else { return true }
+        return sessionID == transcriptInstanceID
+    }
+
+    var activeTaskIDsInStartOrder: [DesktopCodexTaskID] {
+        activeTaskStartOrder.filter { activeTaskIDs.contains($0) }
+    }
 
     init(transcriptID: String) {
         self.transcriptID = transcriptID
@@ -154,9 +172,7 @@ struct DesktopCodexTaskParser {
         }
 
         guard transcriptIsEligible == true,
-              recordType == "event_msg",
               let payload = record["payload"] as? [String: Any],
-              let eventType = payload["type"] as? String,
               let rawTurnID = payload["turn_id"] as? String else {
             return nil
         }
@@ -164,19 +180,56 @@ struct DesktopCodexTaskParser {
         let turnID = rawTurnID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !turnID.isEmpty else { return nil }
 
-        let taskID = DesktopCodexTaskID(transcriptID: transcriptID, turnID: turnID)
-        switch eventType {
-        case "task_started":
-            guard activeTaskIDs.insert(taskID).inserted else { return nil }
-            completedTaskIDs.remove(taskID)
-            return .started(taskID)
-        case "task_complete", "turn_aborted":
-            guard completedTaskIDs.insert(taskID).inserted else { return nil }
-            activeTaskIDs.remove(taskID)
-            return .completed(taskID)
-        default:
+        let taskID = DesktopCodexTaskID(transcriptID: sessionID ?? transcriptID, turnID: turnID)
+        if recordType == "turn_context" {
+            return beginTask(taskID)
+        }
+
+        guard recordType == "event_msg",
+              let eventType = payload["type"] as? String else {
             return nil
         }
+
+        switch eventType {
+        case "task_started":
+            return beginTask(taskID)
+        case "task_complete", "turn_aborted":
+            // A completion can be observed without its start when monitoring
+            // begins mid-transcript. Ignore it instead of creating a false
+            // completed state for the whole desktop activity.
+            guard activeTaskIDs.remove(taskID) != nil,
+                  completedTaskIDs.insert(taskID).inserted else { return nil }
+            activeTaskStartOrder.removeAll { $0 == taskID }
+            return .completed(taskID)
+        default:
+            // Progress records such as item_started/item_completed can be
+            // the first observable record when task_started was flushed in a
+            // different write. They still prove that this turn is active.
+            guard Self.isProgressEvent(eventType) else { return nil }
+            return activeTaskIDs.contains(taskID) ? nil : beginTask(taskID)
+        }
+    }
+
+    private static func isProgressEvent(_ eventType: String) -> Bool {
+        eventType == "token_count"
+            || eventType == "context_compacted"
+            || eventType.hasPrefix("item_")
+            || eventType.hasPrefix("agent_")
+            || eventType.hasPrefix("command_")
+            || eventType.hasPrefix("tool_")
+            || eventType.hasPrefix("file_")
+    }
+
+    private mutating func beginTask(_ taskID: DesktopCodexTaskID) -> DesktopCodexTaskLifecycleEvent? {
+        guard !activeTaskIDs.contains(taskID) else { return nil }
+        if sessionID != nil {
+            activeTaskIDs.removeAll()
+            activeTaskStartOrder.removeAll()
+        }
+        activeTaskIDs.insert(taskID)
+        completedTaskIDs.remove(taskID)
+        activeTaskStartOrder.append(taskID)
+        return .started(taskID)
     }
 
     private mutating func consumeMetadata(_ record: [String: Any]) {
@@ -187,7 +240,19 @@ struct DesktopCodexTaskParser {
             return
         }
 
-        transcriptIsEligible = originator == "Codex Desktop" && threadSource == "user"
+        transcriptInstanceID = payload["id"] as? String
+        for key in ["session_id", "parent_thread_id", "id"] {
+            if let id = payload[key] as? String, !id.isEmpty {
+                sessionID = id
+                break
+            }
+        }
+
+        // User and subagent sessions represent the whole active task. Review
+        // and guardian sessions are internal observations and must not publish
+        // their short-lived terminal events as user-task completion.
+        transcriptIsEligible = originator == "Codex Desktop"
+            && (threadSource == "user" || threadSource == "subagent")
     }
 }
 
@@ -218,7 +283,23 @@ struct CodexActivityCoordinator {
 
     @discardableResult
     mutating func updateAppServerActivity(_ activity: CodexActivity) -> CodexActivity {
+        let previousAppServerActivity = appServerActivity
         appServerActivity = activity
+        switch activity {
+        case .connecting, .running, .waitingForApproval:
+            // The app server may keep emitting its last `running` state after
+            // the desktop transcript has already completed. Preserve that
+            // terminal desktop result across an active-to-active refresh; a
+            // transition from an idle/terminal state still represents new
+            // app-server work and clears the old terminal marker.
+            let wasAlreadyActive = switch previousAppServerActivity {
+            case .connecting, .running, .waitingForApproval: true
+            case .idle, .completed, .failed: false
+            }
+            if !wasAlreadyActive { desktopTerminalActivity = nil }
+        case .idle, .completed, .failed:
+            break
+        }
         self.activity = effectiveActivity
         return self.activity
     }
@@ -642,7 +723,10 @@ struct CodexMotionPresentation: Codable, Hashable {
     }
 
     func automaticStopDelay(for activity: CodexActivity) -> TimeInterval? {
-        if activity == .running, keepsRunningUntilActivityChanges {
+        // Live Codex work can spend most of its time reading files or running
+        // tools without emitting a new activity event. Keep the motion alive
+        // for the entire task; only a terminal activity may stop it.
+        if activity == .running || activity == .waitingForApproval {
             return nil
         }
         return automaticStopDelay

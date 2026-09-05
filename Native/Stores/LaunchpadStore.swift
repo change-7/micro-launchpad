@@ -84,6 +84,7 @@ final class LaunchpadStore {
         if restoredDisplaySettings.didMigrateLegacyPreservation {
             saveCodexMotionDisplaySettings()
         }
+        TerminalCommandFileStore.synchronize(macPages: pages, smartphonePages: smartphonePages)
     }
 
     var currentPage: LaunchPage { pages[selectedPage] }
@@ -109,6 +110,17 @@ final class LaunchpadStore {
               let buttonIndex = smartphonePages[pageIndex].buttons.firstIndex(where: { $0.id == button.id }) else { return }
         smartphonePages[pageIndex].buttons[buttonIndex] = button
         saveSmartphonePages()
+    }
+
+    @discardableResult
+    func swapSmartphoneButtonConfigurations(pageIndex: Int, from sourceID: String, to destinationID: String) -> Bool {
+        guard smartphonePages.indices.contains(pageIndex),
+              smartphonePages[pageIndex].swapButtonConfigurations(from: sourceID, to: destinationID) else {
+            return false
+        }
+
+        saveSmartphonePages()
+        return true
     }
 
     func updateSmartphonePageName(_ name: String, at pageIndex: Int) {
@@ -176,10 +188,12 @@ final class LaunchpadStore {
     func save() {
         guard let data = try? JSONEncoder().encode(pages) else { return }
         preferences.set(data, forKey: storageKey)
+        TerminalCommandFileStore.synchronize(macPages: pages, smartphonePages: smartphonePages)
     }
 
     private func saveSmartphonePages() {
         SmartphoneDefaults.persist(smartphonePages, to: preferences)
+        TerminalCommandFileStore.synchronize(macPages: pages, smartphonePages: smartphonePages)
     }
 
     func saveMotionPresets() {
