@@ -15,7 +15,7 @@ Novation Launchpad Mini MK1을 macOS용 매크로패드로 사용하는 네이�
 Mac 앱이 실행 중일 때만 모바일 반응형 웹페이지와 REST API가 열립니다. 서버는
 Tailscale 주소가 확인된 경우에만 시작하며, 앱이 종료되면 함께 종료됩니다.
 
-- 웹페이지/API: `http://<Tailscale IPv4>:43124/`
+- 웹페이지/API: `http://<Tailscale IP>:43124/` (IPv6는 `http://[<Tailscale IPv6>]:43124/`)
 - 인증: 메뉴 막대 상태 메뉴의 `REST API 토큰 복사`로 토큰을 복사한 뒤 웹페이지에 입력
 - API 요청: `Authorization: Bearer <token>` 헤더 사용
 - 브라우저 mutation 요청(`POST`)은 위 숫자형 Tailscale 주소에서 페이지를 열어야 합니다. MagicDNS 호스트명은 canonical Origin이 아니므로 사용할 수 없습니다.
