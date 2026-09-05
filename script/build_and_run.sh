@@ -24,6 +24,7 @@ assemble_bundle() {
   local staging_path="$ROOT_DIR/.build/.bundle-staging-${bundle_id//./-}"
   local macos_path="$staging_path/Contents/MacOS"
   local resources_path="$staging_path/Contents/Resources"
+  local resource_bundle_path="$(swift build --show-bin-path)/${APP_NAME}_${APP_NAME}.bundle"
 
   rm -rf "$staging_path"
   mkdir -p "$macos_path"
@@ -32,6 +33,11 @@ assemble_bundle() {
   cp "$ROOT_DIR/script/Info.plist" "$staging_path/Contents/Info.plist"
   cp "$ROOT_DIR/script/PkgInfo" "$staging_path/Contents/PkgInfo"
   cp "$ROOT_DIR/assets/MicroLaunchpad.icns" "$resources_path/MicroLaunchpad.icns"
+  if [[ ! -d "$resource_bundle_path" ]]; then
+    echo "SwiftPM resource bundle not found: $resource_bundle_path" >&2
+    exit 1
+  fi
+  cp -R "$resource_bundle_path" "$resources_path/"
   plutil -replace CFBundleIdentifier -string "$bundle_id" "$staging_path/Contents/Info.plist"
   plutil -replace CFBundleName -string "$display_name" "$staging_path/Contents/Info.plist"
   plutil -replace CFBundleDisplayName -string "$display_name" "$staging_path/Contents/Info.plist"

@@ -200,6 +200,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private weak var mainWindow: NSWindow?
     private var statusItem: NSStatusItem?
     private weak var launchpadLEDBubbleMenuItem: NSMenuItem?
+    private var localAPIServer: LocalAPIServer?
     private var allowsTermination = false
     private var hasStartedCodexConnection = false
 
@@ -211,6 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         super.init()
         configureLaunchpadLEDBubbleMenuUpdates()
         configureRemoteCommandHandling()
+        configureLocalAPIServer()
     }
 
     init(
@@ -224,6 +226,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         super.init()
         configureLaunchpadLEDBubbleMenuUpdates()
         configureRemoteCommandHandling()
+        configureLocalAPIServer()
     }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -245,6 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         codex.publishRemoteSessionCount(codexActivityController.activeSessionCount)
         codex.publishRemoteActivity(codexActivityController.activity)
         codex.startRemoteBridge()
+        localAPIServer?.start()
         guard !hasStartedCodexConnection else { return }
         hasStartedCodexConnection = true
         connectionStarter.connect()
@@ -284,6 +288,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         launchpadLEDBubble.close()
         codexActivityController.stopDesktopMonitoring()
+        localAPIServer?.stop()
         codex.stopRemoteBridge()
     }
 
@@ -417,6 +422,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         bubbleItem.state = .off
         bubbleItem.isEnabled = false
         launchpadLEDBubbleMenuItem = bubbleItem
+        let tokenItem = menu.addItem(
+            withTitle: "REST API 토큰 복사",
+            action: #selector(copyLocalAPITokenToPasteboard),
+            keyEquivalent: ""
+        )
+        tokenItem.isEnabled = localAPIServer != nil
         menu.addItem(.separator())
         menu.addItem(withTitle: "완전히 종료", action: #selector(quitFromMenu), keyEquivalent: "")
         menu.items.forEach { $0.target = self }
@@ -435,6 +446,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func toggleLaunchpadLEDBubbleFromMenu() {
         launchpadLEDBubble.toggleVisibilityPreference()
+    }
+
+    @objc private func copyLocalAPITokenToPasteboard() {
+        guard let localAPIToken = LocalAPITokenStore.loadExistingToken() else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(localAPIToken, forType: .string)
+    }
+
+    private func configureLocalAPIServer() {
+        guard let token = LocalAPITokenStore.loadOrCreateToken() else { return }
+        localAPIServer = LocalAPIServer(bearerTokenProvider: { token })
     }
 
     private func configureLaunchpadLEDBubbleMenuUpdates() {
