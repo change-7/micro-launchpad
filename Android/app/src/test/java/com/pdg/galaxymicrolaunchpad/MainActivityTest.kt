@@ -259,6 +259,13 @@ class MainActivityTest {
     }
 
     @Test
+    fun smartphoneIconMapping_distinguishesFilledTerminalFromOutlinedTerminal() {
+        assertFalse(iconForSymbol("terminal") == iconForSymbol("terminal.fill"))
+        assertFalse(iconForSymbol("terminal.fill") == iconForSymbol("chevron.left.forwardslash.chevron.right"))
+        assertEquals("FilledTerminal", iconForSymbol("terminal.fill").name)
+    }
+
+    @Test
     fun emptySmartphoneSymbol_isRenderedWithoutAnIcon() {
         assertTrue(isIconlessSymbol(""))
         assertTrue(isIconlessSymbol("  "))

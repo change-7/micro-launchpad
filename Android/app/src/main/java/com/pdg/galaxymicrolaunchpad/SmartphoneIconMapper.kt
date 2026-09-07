@@ -117,9 +117,32 @@ import androidx.compose.material.icons.outlined.WbSunny
 import androidx.compose.material.icons.outlined.Whatshot
 import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.unit.dp
 import java.util.Locale
 
 /** Maps macOS SF Symbol identifiers to the closest bundled Material icon. */
+private var filledTerminalIconCache: ImageVector? = null
+
+private val FilledTerminal: ImageVector
+    get() = filledTerminalIconCache ?: ImageVector.Builder(
+        name = "FilledTerminal",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).addPath(
+        pathData = PathParser().parsePathString(
+            "M4 3h16c1.1 0 2 .9 2 2v14c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V5c0-1.1.9-2 2-2Z " +
+                "M7.5 8.1 11.4 12l-3.9 3.9 1.4 1.4 5.3-5.3-5.3-5.3z M14 16h4v-2h-4z"
+        ).toNodes(),
+        fill = SolidColor(Color.Black),
+        pathFillType = PathFillType.EvenOdd
+    ).build().also { filledTerminalIconCache = it }
+
 internal fun iconForSymbol(symbol: String): ImageVector {
     return when (symbol.trim().lowercase(Locale.ROOT)) {
         // 실행 및 탐색
@@ -139,7 +162,10 @@ internal fun iconForSymbol(symbol: String): ImageVector {
         "arrow.counterclockwise", "arrow.uturn.backward" -> Icons.Outlined.Undo
 
         // 앱 및 기기
-        "terminal", "terminal.fill" -> Icons.Outlined.Terminal
+        "terminal" -> Icons.Outlined.Terminal
+        // Material's filled and outlined terminal vectors are identical. Keep
+        // this dedicated filled vector visibly distinct on the phone.
+        "terminal.fill" -> FilledTerminal
         "macwindow", "macwindow.on.rectangle", "display", "laptopcomputer" -> Icons.Outlined.LaptopMac
         "iphone" -> Icons.Outlined.PhoneAndroid
         "ipad" -> Icons.Outlined.TabletMac
