@@ -144,8 +144,16 @@ internal fun shouldAutoRevealCodexPage(
     nowElapsedMillis: Long = Long.MAX_VALUE,
     suppressUntilElapsedMillis: Long = 0L
 ): Boolean {
-    if (reason == CodexRevealReason.Running) return false
+    if (reason == CodexRevealReason.Running || reason == CodexRevealReason.Completion) return false
     return nowElapsedMillis >= suppressUntilElapsedMillis
+}
+
+internal fun shouldBlinkCompletionHeader(reason: CodexRevealReason): Boolean {
+    return reason == CodexRevealReason.Completion
+}
+
+internal fun shouldShowCodexWorkingStatus(activeSessionCount: Int): Boolean {
+    return activeSessionCount > 0
 }
 
 internal fun shouldRevealCodex(

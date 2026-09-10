@@ -38,6 +38,38 @@ enum class RemoteConnectionState {
 
 internal fun shouldDisconnectAfterReadTimeout(consecutiveTimeouts: Int): Boolean = consecutiveTimeouts >= 2
 
+internal data class RemoteCommandPayload(
+    val command: String,
+    val buttonID: String?,
+    val decision: String?,
+    val commandID: String
+)
+
+internal fun remoteCommandPayload(
+    command: String,
+    buttonID: String? = null,
+    decision: String? = null,
+    commandID: String = UUID.randomUUID().toString()
+): RemoteCommandPayload = RemoteCommandPayload(command, buttonID, decision, commandID)
+
+internal fun buildRemoteCommandPayload(
+    command: String,
+    buttonID: String? = null,
+    decision: String? = null,
+    commandID: String = UUID.randomUUID().toString()
+): JSONObject {
+    val payload = remoteCommandPayload(command, buttonID, decision, commandID)
+    return JSONObject()
+        .put("type", "command")
+        .put("protocolVersion", 1)
+        .put("id", payload.commandID)
+        .put("command", payload.command)
+        .apply {
+            if (payload.buttonID != null) put("buttonID", payload.buttonID)
+            if (payload.decision != null) put("decision", payload.decision)
+        }
+}
+
 internal data class RemoteApproval(
     val title: String,
     val detail: String
@@ -345,15 +377,15 @@ class RemoteBridgeClient(context: Context) {
         sendCommand(command, null)
     }
 
-    internal fun sendSmartphoneButton(action: ControlAction) {
-        sendCommand("smartphoneButton", action)
+    internal fun sendSmartphoneButton(buttonID: String) {
+        sendCommand("smartphoneButton", buttonID = buttonID)
     }
 
     internal fun sendCodexApproval(decision: String) {
-        sendCommand("codexApproval", null, decision)
+        sendCommand("codexApproval", decision = decision)
     }
 
-    private fun sendCommand(command: String, action: ControlAction?, decision: String? = null) {
+    private fun sendCommand(command: String, buttonID: String? = null, decision: String? = null) {
         if (connectionState != RemoteConnectionState.Connected) {
             mainHandler.post {
                 commandSucceeded = false
@@ -361,25 +393,7 @@ class RemoteBridgeClient(context: Context) {
             }
             return
         }
-        val commandObject = JSONObject()
-            .put("type", "command")
-            .put("protocolVersion", 1)
-            .put("id", UUID.randomUUID().toString())
-            .put("command", command)
-        if (action != null) {
-            commandObject.put("buttonID", action.id)
-            commandObject.put(
-                "action",
-                JSONObject()
-                    .put("kind", action.actionKind)
-                    .put("value", action.actionValue)
-                    .put("targetAppBundleIdentifier", action.targetAppBundleIdentifier)
-                    .put("launchTargetAppIfNeeded", action.launchTargetAppIfNeeded)
-            )
-        }
-        if (decision != null) {
-            commandObject.put("decision", decision)
-        }
+        val commandObject = buildRemoteCommandPayload(command, buttonID, decision)
         commandExecutor.execute {
             val currentWriter = writer ?: return@execute
             runCatching {

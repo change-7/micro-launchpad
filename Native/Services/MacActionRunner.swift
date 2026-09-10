@@ -26,6 +26,12 @@ enum MacActionError: LocalizedError {
 
 @MainActor
 final class MacActionRunner {
+    static let targetAppActivationOptions: NSApplication.ActivationOptions = [
+        .activateAllWindows
+    ]
+    static let targetAppActivationRetryCount = 12
+    static let targetAppActivationRetryInterval: TimeInterval = 0.15
+
     func execute(_ action: PadAction, commandFileID: String? = nil) throws -> String {
         switch action.kind {
         case .app:
@@ -53,14 +59,23 @@ final class MacActionRunner {
             }
 
             if let runningApp = NSRunningApplication.runningApplications(withBundleIdentifier: action.targetAppBundleIdentifier).first {
-                runningApp.activate(options: [.activateAllWindows])
-                scheduleShortcut(action.value, after: 0.18)
+                Self.activateTargetApp(runningApp)
+                scheduleShortcut(
+                    action.value,
+                    after: 0.18,
+                    targetAppBundleIdentifier: action.targetAppBundleIdentifier
+                )
                 return "대상 앱으로 전환한 뒤 단축키를 보냅니다."
             }
 
             guard action.launchTargetAppIfNeeded else { throw MacActionError.targetAppNotRunning }
             NSWorkspace.shared.openApplication(at: appURL, configuration: .init())
-            scheduleShortcut(action.value, after: 0.65)
+            scheduleShortcut(
+                action.value,
+                after: 0.65,
+                targetAppBundleIdentifier: action.targetAppBundleIdentifier,
+                activationRetriesRemaining: Self.targetAppActivationRetryCount
+            )
             return "앱을 실행한 뒤 단축키를 보냅니다."
         case .terminalCommand:
             let command = action.value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -76,9 +91,39 @@ final class MacActionRunner {
         AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
     }
 
-    private func scheduleShortcut(_ label: String, after delay: TimeInterval) {
+    private func scheduleShortcut(
+        _ label: String,
+        after delay: TimeInterval,
+        targetAppBundleIdentifier: String? = nil,
+        activationRetriesRemaining: Int = 0
+    ) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            try? Self.sendShortcut(label)
+            if let targetAppBundleIdentifier,
+               let targetApp = NSRunningApplication.runningApplications(
+                   withBundleIdentifier: targetAppBundleIdentifier
+               ).first {
+                Self.activateTargetApp(targetApp)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                    try? Self.sendShortcut(label)
+                }
+            } else if targetAppBundleIdentifier != nil, activationRetriesRemaining > 0 {
+                self.scheduleShortcut(
+                    label,
+                    after: Self.targetAppActivationRetryInterval,
+                    targetAppBundleIdentifier: targetAppBundleIdentifier,
+                    activationRetriesRemaining: activationRetriesRemaining - 1
+                )
+            } else {
+                try? Self.sendShortcut(label)
+            }
+        }
+    }
+
+    private static func activateTargetApp(_ app: NSRunningApplication) {
+        if #available(macOS 14.0, *) {
+            _ = app.activate(from: NSRunningApplication.current, options: targetAppActivationOptions)
+        } else {
+            _ = app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
         }
     }
 

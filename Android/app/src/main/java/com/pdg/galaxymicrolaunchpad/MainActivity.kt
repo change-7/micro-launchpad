@@ -86,6 +86,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -145,7 +146,7 @@ private const val DefaultHorizontalSwipeCommitDistancePx = HorizontalSwipeCommit
 private const val AppPageTransitionDurationMillis = 150
 private const val AppPageFadeDurationMillis = 100
 private const val ButtonActionRevealSuppressionMillis = 2_500L
-private val ButtonTileIconSize = 36.dp
+private val ButtonTileIconSize = 42.dp
 private val ButtonTileContentGap = 4.dp
 private val ButtonTileLabelFontSize = 14.sp
 private val MainContentTopPadding = 0.dp
@@ -348,10 +349,26 @@ private fun GalaxyMicroLaunchpadApp(remoteBridge: RemoteBridgeClient) {
     var suppressCodexRevealUntilElapsedMillis by remember { mutableStateOf(0L) }
     var showConnectionSettings by rememberSaveable { mutableStateOf(false) }
     var idleBlackoutEnabled by rememberSaveable { mutableStateOf(preferences.idleBlackoutEnabled) }
+    var displayKeepAwakeMinutes by rememberSaveable {
+        mutableStateOf(preferences.displayKeepAwakeMinutes)
+    }
+    var completionBlinkDurationSeconds by rememberSaveable {
+        mutableStateOf(preferences.completionBlinkDurationSeconds)
+    }
+    var completionFlashDismissed by remember { mutableStateOf(false) }
     var blackoutVisible by remember { mutableStateOf(false) }
+    var screenKeepAwakeExpired by remember { mutableStateOf(false) }
     var lastInteractionElapsedMillis by remember { mutableStateOf(SystemClock.elapsedRealtime()) }
+    var lastUserInteractionElapsedMillis by remember { mutableStateOf(lastInteractionElapsedMillis) }
     var localMessage by remember { mutableStateOf("Mac을 찾는 중…") }
     val markInteraction = {
+        val nowElapsedMillis = SystemClock.elapsedRealtime()
+        lastInteractionElapsedMillis = nowElapsedMillis
+        lastUserInteractionElapsedMillis = nowElapsedMillis
+        blackoutVisible = false
+        completionFlashDismissed = true
+    }
+    val markRemoteActivity = {
         lastInteractionElapsedMillis = SystemClock.elapsedRealtime()
         blackoutVisible = false
     }
@@ -368,8 +385,23 @@ private fun GalaxyMicroLaunchpadApp(remoteBridge: RemoteBridgeClient) {
             }
         }
     }
-    DisposableEffect(view, idleBlackoutEnabled) {
-        view.keepScreenOn = idleBlackoutEnabled
+
+    LaunchedEffect(displayKeepAwakeMinutes, lastUserInteractionElapsedMillis) {
+        screenKeepAwakeExpired = false
+        val remainingMillis = displayKeepAwakeDurationMillis(displayKeepAwakeMinutes) -
+            (SystemClock.elapsedRealtime() - lastUserInteractionElapsedMillis)
+        if (remainingMillis > 0L) {
+            delay(remainingMillis)
+        }
+        screenKeepAwakeExpired = !shouldKeepScreenAwake(
+            nowElapsedMillis = SystemClock.elapsedRealtime(),
+            lastInteractionElapsedMillis = lastUserInteractionElapsedMillis,
+            keepAwakeMinutes = displayKeepAwakeMinutes
+        )
+    }
+
+    DisposableEffect(view, screenKeepAwakeExpired) {
+        view.keepScreenOn = !screenKeepAwakeExpired
         onDispose {
             view.keepScreenOn = false
         }
@@ -398,10 +430,27 @@ private fun GalaxyMicroLaunchpadApp(remoteBridge: RemoteBridgeClient) {
             || normalizeRemoteActivity(remoteBridge.activity) != "idle"
             || remoteBridge.commandSucceeded != null
         ) {
-            markInteraction()
+            markRemoteActivity()
         }
     }
-    val headerMessage = if (remoteBridge.connectionState == RemoteConnectionState.Connected) {
+    LaunchedEffect(remoteBridge.codexRevealEventId, remoteBridge.codexRevealReason) {
+        if (remoteBridge.codexRevealEventId > 0
+            && shouldBlinkCompletionHeader(remoteBridge.codexRevealReason)
+        ) {
+            completionFlashDismissed = false
+        }
+    }
+    val completionEventId = if (
+        !completionFlashDismissed
+            && shouldBlinkCompletionHeader(remoteBridge.codexRevealReason)
+    ) {
+        remoteBridge.codexRevealEventId
+    } else {
+        0
+    }
+    val headerMessage = if (completionEventId > 0) {
+        "Codex 작업 완료"
+    } else if (remoteBridge.connectionState == RemoteConnectionState.Connected) {
         remoteBridge.message
     } else {
         localMessage
@@ -459,9 +508,12 @@ private fun GalaxyMicroLaunchpadApp(remoteBridge: RemoteBridgeClient) {
                     null -> TextMuted
                 },
                 connectionState = remoteBridge.connectionState,
-                activity = remoteBridge.activity,
+                activeSessionCount = remoteBridge.activeSessionCount,
                 fiveHourRemaining = remoteBridge.fiveHourRemainingPercent,
-                weeklyRemaining = remoteBridge.remainingPercent
+                weeklyRemaining = remoteBridge.remainingPercent,
+                completionEventId = completionEventId,
+                completionBlinkDurationMillis = completionBlinkDurationMillis(completionBlinkDurationSeconds),
+                onCompletionFlashFinished = { completionFlashDismissed = true }
             )
             Box(
                 modifier = Modifier
@@ -487,7 +539,7 @@ private fun GalaxyMicroLaunchpadApp(remoteBridge: RemoteBridgeClient) {
                                 suppressCodexRevealUntilElapsedMillis =
                                     SystemClock.elapsedRealtime() + ButtonActionRevealSuppressionMillis
                                 if (action.command == "smartphoneButton") {
-                                    remoteBridge.sendSmartphoneButton(action)
+                                    remoteBridge.sendSmartphoneButton(action.id)
                                 } else {
                                     remoteBridge.sendCommand(action.command)
                                 }
@@ -533,7 +585,11 @@ private fun GalaxyMicroLaunchpadApp(remoteBridge: RemoteBridgeClient) {
         if (showConnectionSettings) {
             BridgeConnectionSettingsDialog(
                 idleBlackoutEnabled = idleBlackoutEnabled,
+                displayKeepAwakeMinutes = displayKeepAwakeMinutes,
+                completionBlinkDurationSeconds = completionBlinkDurationSeconds,
                 onIdleBlackoutEnabledChanged = { idleBlackoutEnabled = it },
+                onDisplayKeepAwakeMinutesChanged = { displayKeepAwakeMinutes = it },
+                onCompletionBlinkDurationSecondsChanged = { completionBlinkDurationSeconds = it },
                 onDismiss = { showConnectionSettings = false }
             )
         }
@@ -545,11 +601,29 @@ private fun Header(
     message: String,
     messageColor: Color,
     connectionState: RemoteConnectionState,
-    activity: String,
+    activeSessionCount: Int,
     fiveHourRemaining: Int?,
-    weeklyRemaining: Int?
+    weeklyRemaining: Int?,
+    completionEventId: Int,
+    completionBlinkDurationMillis: Long,
+    onCompletionFlashFinished: () -> Unit
 ) {
-    val isCodexRunning = normalizeRemoteActivity(activity) == "running"
+    val isCodexWorking = shouldShowCodexWorkingStatus(activeSessionCount)
+    val isCompletion = completionEventId > 0
+    var completionBlinkOn by remember { mutableStateOf(false) }
+    LaunchedEffect(completionEventId, completionBlinkDurationMillis) {
+        completionBlinkOn = false
+        if (completionEventId > 0) {
+            val blinkSteps = 8
+            val halfPeriodMillis = (completionBlinkDurationMillis / blinkSteps).coerceAtLeast(80L)
+            repeat(blinkSteps) { step ->
+                completionBlinkOn = step % 2 == 0
+                delay(halfPeriodMillis)
+            }
+            onCompletionFlashFinished()
+        }
+        completionBlinkOn = false
+    }
     val pulse = rememberInfiniteTransition(label = "codex-header-pulse")
     val pulseProgress by pulse.animateFloat(
         initialValue = 0f,
@@ -560,11 +634,12 @@ private fun Header(
         ),
         label = "codex-header-pulse-progress"
     )
-    val statusColor = if (isCodexRunning) {
-        Green.copy(alpha = codexHeaderPulseAlpha(activity, pulseProgress))
+    val workingStatusColor = if (isCodexWorking) {
+        Green.copy(alpha = codexHeaderPulseAlpha("running", pulseProgress))
     } else {
-        messageColor
+        Green
     }
+    val completionStatusColor = if (completionBlinkOn) Green else Green.copy(alpha = 0.25f)
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -596,20 +671,45 @@ private fun Header(
                 fontSize = 16.sp
             )
             Spacer(Modifier.width(18.dp))
-            if (isCodexRunning) {
-                RunningStatusIndicator(color = Green)
-                Spacer(Modifier.width(8.dp))
-            }
-            Text(
-                message,
-                color = statusColor,
-                fontSize = 14.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            Row(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(end = 12.dp)
-            )
+                    .padding(end = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (isCodexWorking) {
+                    RunningStatusIndicator(color = workingStatusColor)
+                    Text(
+                        "Codex 작업중",
+                        color = workingStatusColor,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                if (isCompletion) {
+                    Text(
+                        "Codex 작업 완료",
+                        color = completionStatusColor,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                if (!isCodexWorking && !isCompletion) {
+                    Text(
+                        message,
+                        color = messageColor,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
             UsageMeter(label = "5시간", remainingPercent = fiveHourRemaining, accent = GaugeCool)
             Spacer(Modifier.width(10.dp))
             UsageMeter(label = "주간", remainingPercent = weeklyRemaining, accent = GaugeHigh)
@@ -663,7 +763,11 @@ private fun RunningStatusIndicator(color: Color) {
 @Composable
 private fun BridgeConnectionSettingsDialog(
     idleBlackoutEnabled: Boolean,
+    displayKeepAwakeMinutes: Int,
+    completionBlinkDurationSeconds: Int,
     onIdleBlackoutEnabledChanged: (Boolean) -> Unit,
+    onDisplayKeepAwakeMinutesChanged: (Int) -> Unit,
+    onCompletionBlinkDurationSecondsChanged: (Int) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -673,6 +777,12 @@ private fun BridgeConnectionSettingsDialog(
     var sleepWindowStart by remember { mutableStateOf(preferences.sleepWindowStartMinutes) }
     var sleepWindowEnd by remember { mutableStateOf(preferences.sleepWindowEndMinutes) }
     var draftIdleBlackoutEnabled by remember { mutableStateOf(idleBlackoutEnabled) }
+    var draftDisplayKeepAwakeMinutes by remember {
+        mutableStateOf(clampDisplayKeepAwakeMinutes(displayKeepAwakeMinutes))
+    }
+    var draftCompletionBlinkDurationSeconds by remember {
+        mutableStateOf(completionBlinkDurationSeconds)
+    }
     val selectedMinutes = selectedKey.removeSuffix("m").toIntOrNull()
         ?.coerceIn(MinScreenOffTimeoutMinutes, MaxScreenOffTimeoutMinutes)
         ?: 30
@@ -699,7 +809,11 @@ private fun BridgeConnectionSettingsDialog(
                 ) {
                     RadioButton(
                         selected = selectedKey != "always",
-                        onClick = { selectedKey = "${selectedMinutes}m" }
+                        onClick = { selectedKey = "${selectedMinutes}m" },
+                        colors = RadioButtonDefaults.colors(
+                            selectedColor = Green,
+                            unselectedColor = TextMuted
+                        )
                     )
                     Text("제한 시간", color = TextPrimary, fontSize = 14.sp)
                     Spacer(Modifier.width(8.dp))
@@ -735,11 +849,45 @@ private fun BridgeConnectionSettingsDialog(
                 ) {
                     RadioButton(
                         selected = selectedKey == "always",
-                        onClick = { selectedKey = "always" }
+                        onClick = { selectedKey = "always" },
+                        colors = RadioButtonDefaults.colors(
+                            selectedColor = Green,
+                            unselectedColor = TextMuted
+                        )
                     )
                     Text("계속 유지", color = TextPrimary, fontSize = 14.sp)
                 }
                 Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("디스플레이 켜짐 유지", color = TextPrimary, fontSize = 14.sp)
+                    Spacer(Modifier.weight(1f))
+                    IconButton(
+                        onClick = {
+                            draftDisplayKeepAwakeMinutes = clampDisplayKeepAwakeMinutes(
+                                draftDisplayKeepAwakeMinutes - DisplayKeepAwakeStepMinutes
+                            )
+                        },
+                        enabled = draftDisplayKeepAwakeMinutes > MinDisplayKeepAwakeMinutes,
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        Icon(Icons.Outlined.Remove, contentDescription = "화면 유지 시간 줄이기", tint = TextPrimary)
+                    }
+                    Text("${draftDisplayKeepAwakeMinutes}분", color = TextPrimary, fontSize = 14.sp)
+                    IconButton(
+                        onClick = {
+                            draftDisplayKeepAwakeMinutes = clampDisplayKeepAwakeMinutes(
+                                draftDisplayKeepAwakeMinutes + DisplayKeepAwakeStepMinutes
+                            )
+                        },
+                        enabled = draftDisplayKeepAwakeMinutes < MaxDisplayKeepAwakeMinutes,
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        Icon(Icons.Outlined.Add, contentDescription = "화면 유지 시간 늘리기", tint = TextPrimary)
+                    }
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -759,12 +907,46 @@ private fun BridgeConnectionSettingsDialog(
                         )
                     )
                 }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("완료 깜빡임", color = TextPrimary, fontSize = 14.sp)
+                    Spacer(Modifier.weight(1f))
+                    IconButton(
+                        onClick = {
+                            draftCompletionBlinkDurationSeconds = clampCompletionBlinkDurationSeconds(
+                                draftCompletionBlinkDurationSeconds - 1
+                            )
+                        },
+                        enabled = draftCompletionBlinkDurationSeconds > MinCompletionBlinkDurationSeconds,
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        Icon(Icons.Outlined.Remove, contentDescription = "완료 깜빡임 시간 줄이기", tint = TextPrimary)
+                    }
+                    Text("${draftCompletionBlinkDurationSeconds}초", color = TextPrimary, fontSize = 14.sp)
+                    IconButton(
+                        onClick = {
+                            draftCompletionBlinkDurationSeconds = clampCompletionBlinkDurationSeconds(
+                                draftCompletionBlinkDurationSeconds + 1
+                            )
+                        },
+                        enabled = draftCompletionBlinkDurationSeconds < MaxCompletionBlinkDurationSeconds,
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        Icon(Icons.Outlined.Add, contentDescription = "완료 깜빡임 시간 늘리기", tint = TextPrimary)
+                    }
+                }
                 Spacer(Modifier.height(6.dp))
                 Text("절전 시간대", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(
                         selected = sleepWindowEnabled,
-                        onClick = { sleepWindowEnabled = !sleepWindowEnabled }
+                        onClick = { sleepWindowEnabled = !sleepWindowEnabled },
+                        colors = RadioButtonDefaults.colors(
+                            selectedColor = Green,
+                            unselectedColor = TextMuted
+                        )
                     )
                     Text("사용", color = TextPrimary, fontSize = 14.sp)
                     Spacer(Modifier.width(8.dp))
@@ -795,6 +977,8 @@ private fun BridgeConnectionSettingsDialog(
                 onClick = {
                     preferences.screenOffOptionKey = selectedKey
                     preferences.idleBlackoutEnabled = draftIdleBlackoutEnabled
+                    preferences.displayKeepAwakeMinutes = draftDisplayKeepAwakeMinutes
+                    preferences.completionBlinkDurationSeconds = draftCompletionBlinkDurationSeconds
                     preferences.sleepWindowEnabled = sleepWindowEnabled
                     preferences.sleepWindowStartMinutes = sleepWindowStart
                     preferences.sleepWindowEndMinutes = sleepWindowEnd
@@ -803,10 +987,12 @@ private fun BridgeConnectionSettingsDialog(
                             .setPackage(context.packageName)
                     )
                     onIdleBlackoutEnabledChanged(draftIdleBlackoutEnabled)
+                    onDisplayKeepAwakeMinutesChanged(draftDisplayKeepAwakeMinutes)
+                    onCompletionBlinkDurationSecondsChanged(draftCompletionBlinkDurationSeconds)
                     onDismiss()
                 }
             ) {
-                Text("저장", color = GaugeHigh)
+                Text("저장", color = Green)
             }
         },
         dismissButton = {
@@ -851,9 +1037,10 @@ private fun UsageMeter(label: String, remainingPercent: Int?, accent: Color) {
         )
         Text(
             clampedPercent?.let { "$it%" } ?: "--",
-            color = clampedPercent?.let { accent } ?: TextMuted,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Medium
+            color = if (clampedPercent != null) TextPrimary else TextMuted,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
         )
     }
 }

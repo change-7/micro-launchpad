@@ -24,6 +24,11 @@ final class CodexMotionActivityRouter {
     }
 }
 
+private enum MainScreen: Hashable {
+    case launchpadMini
+    case smartphoneButtons
+}
+
 struct ContentView: View {
     @Bindable var store: LaunchpadStore
     let runner: MacActionRunner
@@ -35,7 +40,8 @@ struct ContentView: View {
     @State private var showingPermissionAlert = false
     @State private var selectedPageLEDIndex: Int?
     @State private var showingCodexConnection = false
-    @State private var showingSmartphoneSettings = false
+    @State private var selectedMainScreen: MainScreen = .launchpadMini
+    private let launchpadPanelHeight: CGFloat = 620
     @State private var virtualPreviewEnabled = true
     @State private var virtualMotion = VirtualMotionPlayer()
     @State private var codexMotionActivity = CodexMotionActivityRouter()
@@ -126,70 +132,139 @@ struct ContentView: View {
                 codex: codex
             )
         }
-        .sheet(isPresented: $showingSmartphoneSettings) {
-            SmartphoneSettingsView(store: store, runner: runner)
-                .frame(minWidth: 900, minHeight: 680)
-        }
     }
 
     private var launchpadContent: some View {
+        VStack(spacing: 18) {
+            launchpadToolbar
+            switch selectedMainScreen {
+            case .launchpadMini:
+                launchpadMiniContent
+            case .smartphoneButtons:
+                SmartphoneSettingsView(store: store, runner: runner)
+                    .frame(minWidth: 900, minHeight: 680)
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.bottom, 18)
+    }
+
+    private var launchpadMiniContent: some View {
         ScrollView {
-            VStack(spacing: 18) {
-                PageQuickSwitchView(
+            HStack(alignment: .top, spacing: 28) {
+                InspectorView(
+                    pad: $editedPad,
+                    pages: store.pages,
+                    selectedPageLEDIndex: selectedPageLEDIndex,
+                    onSelectPageLED: { selectedPageLEDIndex = $0 },
+                    onUpdatePageColor: { index, color, selected in
+                        store.updatePageColor(color, selected: selected, at: index)
+                    },
+                    onUpdatePageName: { index, name in store.updatePageName(name, at: index) },
+                    onReset: {
+                        if editedPad.id.hasPrefix("grid_") {
+                            deleteGridPad(editedPad.id)
+                        } else {
+                            store.resetSelectedPad()
+                            synchronizeSelection()
+                        }
+                    },
+                    onRun: { run(editedPad) }
+                )
+                .frame(width: 360, height: launchpadPanelHeight)
+
+                LaunchpadView(
+                    page: store.currentPage,
                     pages: store.pages,
                     activePage: store.selectedPage,
+                    selectedPadID: store.selectedPadID,
                     midiConnected: midi.isConnected,
-                    codexConnected: codex.isConnected,
-                    onSelect: selectPage,
-                    onOpenCodex: { showingCodexConnection = true },
-                    onOpenSmartphone: { showingSmartphoneSettings = true }
+                    virtualPreviewEnabled: $virtualPreviewEnabled,
+                    motionFrame: virtualMotion.frame,
+                    gridOverlay: weeklyUsageGridColors,
+                    onSelectPage: selectPage,
+                    onSelectPageLED: { selectedPageLEDIndex = $0 },
+                    onSelectPad: selectPad,
+                    onRunPad: run,
+                    onVirtualPadPress: virtualPadPress,
+                    onMoveGridPad: moveGridPad
                 )
-                HStack(alignment: .top, spacing: 28) {
-                    InspectorView(
-                        pad: $editedPad,
-                        pages: store.pages,
-                        selectedPageLEDIndex: selectedPageLEDIndex,
-                        onSelectPageLED: { selectedPageLEDIndex = $0 },
-                        onUpdatePageColor: { index, color, selected in
-                            store.updatePageColor(color, selected: selected, at: index)
-                        },
-                        onUpdatePageName: { index, name in store.updatePageName(name, at: index) },
-                        onReset: {
-                            if editedPad.id.hasPrefix("grid_") {
-                                deleteGridPad(editedPad.id)
-                            } else {
-                                store.resetSelectedPad()
-                                synchronizeSelection()
-                            }
-                        },
-                        onRun: { run(editedPad) }
-                    )
-                    .frame(width: 360)
-                    .frame(minHeight: 600)
-
-                    LaunchpadView(
-                        page: store.currentPage,
-                        pages: store.pages,
-                        activePage: store.selectedPage,
-                        selectedPadID: store.selectedPadID,
-                        midiConnected: midi.isConnected,
-                        virtualPreviewEnabled: $virtualPreviewEnabled,
-                        motionFrame: virtualMotion.frame,
-                        gridOverlay: weeklyUsageGridColors,
-                        onSelectPage: selectPage,
-                        onSelectPageLED: { selectedPageLEDIndex = $0 },
-                        onSelectPad: selectPad,
-                        onRunPad: run,
-                        onVirtualPadPress: virtualPadPress,
-                        onMoveGridPad: moveGridPad
-                    )
-                    .frame(minWidth: 610, minHeight: 620)
-                }
+                .frame(minWidth: 610)
+                .frame(height: launchpadPanelHeight)
             }
             .frame(maxWidth: 1120)
-            .padding(.horizontal, 18)
-            .padding(.bottom, 18)
+            .frame(height: launchpadPanelHeight, alignment: .top)
         }
+    }
+
+    private var launchpadToolbar: some View {
+        ZStack {
+            HStack(spacing: 4) {
+                mainScreenButton(
+                    .launchpadMini,
+                    title: "런치패드 미니",
+                    systemImage: "square.grid.3x3"
+                )
+                mainScreenButton(
+                    .smartphoneButtons,
+                    title: "휴대폰",
+                    systemImage: "iphone"
+                )
+            }
+            .padding(3)
+            .background(.regularMaterial.opacity(0.42), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.10)))
+            .shadow(color: .black.opacity(0.24), radius: 8, y: 3)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("화면 모드 선택")
+
+            HStack(spacing: 9) {
+                Spacer()
+                Button { showingCodexConnection = true } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 32, height: 28)
+                        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Codex 설정")
+                Circle().fill(codex.isConnected ? .green : .gray).frame(width: 7, height: 7)
+                Circle().fill(midi.isConnected ? .green : .gray).frame(width: 7, height: 7)
+            }
+        }
+        .frame(maxWidth: 1120)
+        .foregroundStyle(.white)
+        .offset(y: -24)
+    }
+
+    private func mainScreenButton(
+        _ screen: MainScreen,
+        title: String,
+        systemImage: String
+    ) -> some View {
+        Button { selectedMainScreen = screen } label: {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                Text(title)
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .frame(width: 118, height: 32)
+            .contentShape(RoundedRectangle(cornerRadius: 7))
+            .foregroundStyle(selectedMainScreen == screen ? .white : .white.opacity(0.65))
+            .background(
+                selectedMainScreen == screen ? Color.orange.opacity(0.22) : .clear,
+                in: RoundedRectangle(cornerRadius: 7)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(selectedMainScreen == screen ? Color.orange.opacity(0.72) : .clear)
+            )
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .focusEffectDisabled()
+        .accessibilityLabel(title)
+        .help(title)
     }
 
     private var footer: some View {
@@ -202,7 +277,7 @@ struct ContentView: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 26)
         .frame(height: 34)
-        .background(Color(red: 0.065, green: 0.065, blue: 0.08))
+        .background(Color(red: 0.035, green: 0.035, blue: 0.045))
     }
 
     private func selectPage(_ index: Int) {
@@ -426,77 +501,4 @@ struct ContentView: View {
         case .idle, .completed, .failed: false
         }
     }
-}
-
-private struct PageQuickSwitchView: View {
-    let pages: [LaunchPage]
-    let activePage: Int
-    let midiConnected: Bool
-    let codexConnected: Bool
-    let onSelect: (Int) -> Void
-    let onOpenCodex: () -> Void
-    let onOpenSmartphone: () -> Void
-
-    var body: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 9) {
-                Image(systemName: "square.3.layers.3d").foregroundStyle(.orange).frame(width: 22, height: 22).background(.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 5))
-                Text("페이지 퀵 스위처").font(.system(size: 14, weight: .bold))
-                Text("(TOP CC 1~8 연동)").font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
-                Spacer()
-                Button(action: onOpenCodex) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 13, weight: .semibold))
-                        .frame(width: 32, height: 28)
-                        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Codex 설정")
-                Button(action: onOpenSmartphone) {
-                    Label("휴대폰", systemImage: "iphone")
-                        .font(.system(size: 12, weight: .semibold))
-                        .padding(.horizontal, 8)
-                        .frame(height: 28)
-                        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("스마트폰 버튼 설정")
-                .help("스마트폰 버튼 설정")
-                Circle().fill(codexConnected ? .green : .gray).frame(width: 7, height: 7)
-                Circle().fill(midiConnected ? .green : .gray).frame(width: 7, height: 7)
-            }
-            .foregroundStyle(.white)
-
-            HStack(spacing: 10) {
-                ForEach(Array(pages.enumerated()), id: \.element.id) { index, page in
-                    Button { onSelect(index) } label: {
-                        VStack(alignment: .leading, spacing: 7) {
-                            HStack {
-                                Text("P\(index + 1)").foregroundStyle(.orange)
-                                Text("CC\(104 + index)").foregroundStyle(.secondary)
-                                Spacer()
-                                let count = page.pads.filter { $0.action.kind != .none }.count
-                                if count > 0 { Text("\(count)").padding(.horizontal, 6).padding(.vertical, 2).background(.white.opacity(0.10), in: Capsule()) }
-                            }
-                            .font(.system(size: 10, weight: .bold, design: .monospaced))
-                            Text(page.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(11)
-                        .foregroundStyle(.white.opacity(index == activePage ? 1 : 0.72))
-                        .background(index == activePage ? Color(red: 0.11, green: 0.11, blue: 0.14) : Color.black.opacity(0.26), in: RoundedRectangle(cornerRadius: 10))
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(index == activePage ? Color.orange : .white.opacity(0.12), lineWidth: index == activePage ? 1.5 : 1))
-                        .shadow(color: index == activePage ? .orange.opacity(0.24) : .clear, radius: 9)
-                    }
-                    .buttonStyle(.plain)
-                    .focusable(false)
-                }
-            }
-
-        }
-        .padding(14)
-        .background(Color(red: 0.065, green: 0.065, blue: 0.08), in: RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.12)))
-    }
-
 }

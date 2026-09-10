@@ -49,7 +49,7 @@ struct PadButton: View {
                 }
             }
             .shadow(color: selected ? .orange.opacity(0.8) : (pad.idleColor == "off" ? .clear : padColor.opacity(0.62)), radius: selected ? 11 : 8)
-            .scaleEffect(pressed ? 0.95 : (selected ? 1.035 : 1))
+            .scaleEffect(pressed ? 0.96 : (selected ? 1.035 : 1))
         }
         .buttonStyle(.plain)
         .contextMenu {

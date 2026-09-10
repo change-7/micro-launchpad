@@ -86,6 +86,17 @@ final class CodexRemoteStateTests: XCTestCase {
         XCTAssertNotEqual(smartphonePages[0].buttons[0].id, "grid_0_0")
     }
 
+    func testSmartphoneDefaults_resolvesOnlyStoredButtonIDs() {
+        let pages = SmartphoneDefaults.pages()
+        let storedButton = pages[0].buttons[0]
+
+        XCTAssertEqual(
+            SmartphoneDefaults.button(id: storedButton.id, in: pages),
+            storedButton
+        )
+        XCTAssertNil(SmartphoneDefaults.button(id: "missing-button", in: pages))
+    }
+
     func testPadAction_repairsLegacyAppBundleIDStoredAsShortcutValue() {
         let action = PadAction(
             kind: .shortcut,
@@ -328,6 +339,17 @@ final class CodexRemoteStateTests: XCTestCase {
         XCTAssertTrue(source.contains("reopen"))
         XCTAssertTrue(source.contains("repeat until (count of windows) > 0"))
         XCTAssertTrue(source.contains("in front window"))
+    }
+
+    @MainActor
+    func testShortcutTargetActivation_forcesTheTargetAppToTheFront() {
+        XCTAssertTrue(MacActionRunner.targetAppActivationOptions.contains(.activateAllWindows))
+    }
+
+    @MainActor
+    func testShortcutTargetActivation_waitsForLaunchedAppBeforeDispatching() {
+        XCTAssertGreaterThan(MacActionRunner.targetAppActivationRetryCount, 0)
+        XCTAssertGreaterThan(MacActionRunner.targetAppActivationRetryInterval, 0)
     }
 
     func testRemoteCommand_roundTripsCodexApprovalDecision() throws {

@@ -125,7 +125,10 @@ struct SmartphoneSettingsView: View {
             }
             Spacer()
         }
-        .frame(width: 140, alignment: .leading)
+        .frame(width: 150, alignment: .leading)
+        .padding(10)
+        .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.08)))
     }
 
     private var buttonGrid: some View {
@@ -145,12 +148,16 @@ struct SmartphoneSettingsView: View {
                     Button { buttonIndex = index } label: {
                         VStack(spacing: 6) {
                             buttonIcon(for: button, isSelected: index == buttonIndex)
-                            Text(button.title)
-                                .font(.system(size: 11, weight: .medium))
-                                .lineLimit(1)
-                            Text(button.action.kind.title)
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundStyle(.secondary)
+                            if !button.title.isEmpty {
+                                Text(button.title)
+                                    .font(.system(size: 11, weight: .medium))
+                                    .lineLimit(1)
+                            }
+                            if button.action.kind != .none {
+                                Text(button.action.kind.title)
+                                    .font(.system(size: 9, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                         .frame(maxWidth: .infinity, minHeight: 78)
                         .padding(7)
@@ -197,6 +204,9 @@ struct SmartphoneSettingsView: View {
             Spacer()
         }
         .frame(minWidth: 350, maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.08)))
     }
 
     private var editor: some View {

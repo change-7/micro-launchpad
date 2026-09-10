@@ -60,6 +60,11 @@ enum SmartphoneDefaults {
         "smartphone_page_\(pageIndex)_button_\(buttonIndex)"
     }
 
+    static func button(id: String, in pages: [SmartphonePage]) -> SmartphoneButton? {
+        guard !id.isEmpty else { return nil }
+        return pages.lazy.flatMap(\.buttons).first { $0.id == id }
+    }
+
     static func normalized(_ page: SmartphonePage, at pageIndex: Int) -> SmartphonePage {
         let defaults = pages()[pageIndex]
         var normalized = page

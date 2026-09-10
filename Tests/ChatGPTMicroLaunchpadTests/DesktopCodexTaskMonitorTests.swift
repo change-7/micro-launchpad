@@ -214,7 +214,7 @@ final class DesktopCodexTaskMonitorTests: XCTestCase {
     }
 
     @MainActor
-    func testMonitor_whenMultipleFilesAppear_recursesDeterministicallyAndIncludesSubagents() async throws {
+    func testMonitor_whenMultipleFilesAppear_recursesDeterministicallyAndIgnoresSubagents() async throws {
         // Given
         let fixture = try MonitorFixture()
         var events: [DesktopCodexTaskLifecycleEvent] = []
@@ -242,8 +242,6 @@ final class DesktopCodexTaskMonitorTests: XCTestCase {
         XCTAssertEqual(events, [
             .started(DesktopCodexTaskID(transcriptID: "2026/08/01/a.jsonl", turnID: "a")),
             .started(DesktopCodexTaskID(transcriptID: "2026/08/02/nested/b.jsonl", turnID: "b"))
-            ,
-            .started(DesktopCodexTaskID(transcriptID: "2026/08/03/subagent.jsonl", turnID: "subagent"))
         ])
     }
 

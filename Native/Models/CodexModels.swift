@@ -248,11 +248,12 @@ struct DesktopCodexTaskParser {
             }
         }
 
-        // User and subagent sessions represent the whole active task. Review
-        // and guardian sessions are internal observations and must not publish
-        // their short-lived terminal events as user-task completion.
+        // Only the user's root session represents the phone-tracked task.
+        // Subagent, review, and guardian sessions are internal observations
+        // and must not publish their short-lived terminal events as
+        // user-task completion.
         transcriptIsEligible = originator == "Codex Desktop"
-            && (threadSource == "user" || threadSource == "subagent")
+            && threadSource == "user"
     }
 }
 

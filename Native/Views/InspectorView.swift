@@ -98,9 +98,11 @@ struct InspectorView: View {
             Spacer(minLength: 0)
         }
         .padding(16)
+        .frame(maxHeight: .infinity, alignment: .top)
         .foregroundStyle(Color(red: 0.88, green: 0.88, blue: 0.91))
         .background(Color(red: 0.065, green: 0.065, blue: 0.08), in: RoundedRectangle(cornerRadius: 18))
         .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.white.opacity(0.11)))
+        .shadow(color: .black.opacity(0.28), radius: 18, y: 8)
         .onChange(of: pad.id) { _, _ in
             appRegistrationRequestID = UUID()
         }
@@ -181,6 +183,7 @@ struct InspectorView: View {
                 .foregroundStyle(pad.action.kind == kind ? Color.black : .white.opacity(0.72))
                 .background(pad.action.kind == kind ? Color.orange : Color.black.opacity(0.38), in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(pad.action.kind == kind ? Color.orange : Color.white.opacity(0.18)))
+                .frame(minHeight: 42)
         }
         .buttonStyle(.plain)
     }

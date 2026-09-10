@@ -24,6 +24,7 @@ struct ChatGPTMicroLaunchpadApp: App {
         }
         .defaultSize(width: 1120, height: 860)
         .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandMenu("런치패드") {
                 Button("설정 창 열기") { appDelegate.showMainWindow() }
@@ -361,10 +362,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let message: String
             switch command.command {
             case "smartphoneButton":
-                guard let action = command.action else {
-                    return CodexRemoteCommandResult(id: command.id, success: false, message: "스마트폰 버튼 동작이 없습니다.")
+                guard let buttonID = command.buttonID,
+                      let button = SmartphoneDefaults.button(id: buttonID, in: SmartphoneDefaults.persistedPages()) else {
+                    return CodexRemoteCommandResult(id: command.id, success: false, message: "스마트폰 버튼 설정을 찾을 수 없습니다.")
                 }
-                message = try remoteActionRunner.execute(action, commandFileID: command.buttonID)
+                message = try remoteActionRunner.execute(button.action, commandFileID: button.id)
             case "codexApproval":
                 guard let decision = command.decision else {
                     return CodexRemoteCommandResult(id: command.id, success: false, message: "Codex 승인 응답이 없습니다.")

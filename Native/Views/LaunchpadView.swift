@@ -36,8 +36,9 @@ struct LaunchpadView: View {
                         Label(virtualPreviewEnabled ? "가상 작동" : "편집", systemImage: virtualPreviewEnabled ? "hand.tap.fill" : "slider.horizontal.3")
                             .font(.system(size: 10, weight: .bold))
                             .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
+                            .frame(minHeight: 30)
                             .background((virtualPreviewEnabled ? Color.orange : Color.white.opacity(0.10)), in: Capsule())
+                            .overlay(Capsule().stroke(.white.opacity(virtualPreviewEnabled ? 0.12 : 0.18)))
                     }
                     .buttonStyle(.plain)
                     Circle().fill(midiConnected ? .green : .gray).frame(width: 8, height: 8)
@@ -80,8 +81,11 @@ struct LaunchpadView: View {
                 .padding(.top, 4)
             }
             .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(Color(red: 0.11, green: 0.11, blue: 0.14), in: RoundedRectangle(cornerRadius: 36))
             .overlay(RoundedRectangle(cornerRadius: 36).stroke(.black.opacity(0.9), lineWidth: 4))
+            .overlay(RoundedRectangle(cornerRadius: 36).stroke(.white.opacity(0.08), lineWidth: 1))
+            .shadow(color: .black.opacity(0.42), radius: 24, y: 12)
         }
         .frame(minHeight: 620)
     }

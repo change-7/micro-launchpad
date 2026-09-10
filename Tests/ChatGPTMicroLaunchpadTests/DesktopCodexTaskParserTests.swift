@@ -73,16 +73,13 @@ final class DesktopCodexTaskParserTests: XCTestCase {
         XCTAssertEqual(parser.activeTaskIDs, [taskID])
     }
 
-    func testParser_whenTranscriptIsASubagent_acceptsCodexDesktopTaskEvents() {
+    func testParser_whenTranscriptIsASubagent_ignoresCodexDesktopTaskEvents() {
         var parser = DesktopCodexTaskParser(transcriptID: "subagent.jsonl")
         let transcript = desktopMetadata(threadSource: "subagent") + userMetadata + taskStarted(turnID: "turn-1") + taskCompleted(turnID: "turn-1")
 
         let updates = parser.consume(Data(transcript.utf8))
 
-        XCTAssertEqual(updates, [
-            .started(DesktopCodexTaskID(transcriptID: "subagent.jsonl", turnID: "turn-1")),
-            .completed(DesktopCodexTaskID(transcriptID: "subagent.jsonl", turnID: "turn-1"))
-        ])
+        XCTAssertTrue(updates.isEmpty)
         XCTAssertTrue(parser.activeTaskIDs.isEmpty)
     }
 

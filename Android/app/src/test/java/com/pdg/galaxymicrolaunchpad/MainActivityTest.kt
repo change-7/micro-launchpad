@@ -9,6 +9,18 @@ import org.junit.Test
 
 class MainActivityTest {
     @Test
+    fun smartphoneButtonCommand_containsButtonIDWithoutActionPayload() {
+        val payload = remoteCommandPayload(
+            command = "smartphoneButton",
+            buttonID = "smartphone_page_0_button_0",
+            commandID = "test-command"
+        )
+
+        assertEquals("smartphoneButton", payload.command)
+        assertEquals("smartphone_page_0_button_0", payload.buttonID)
+    }
+
+    @Test
     fun remoteUsageField_preservesCachedValueWhenWireFieldIsAbsent() {
         assertEquals(67, mergeRemoteUsageInt(fieldPresent = false, fieldIsNull = false, fieldValue = null, current = 67))
     }
@@ -74,6 +86,32 @@ class MainActivityTest {
     }
 
     @Test
+    fun displayKeepAwake_usesTenMinuteStepsAndClampsToSixtyMinutes() {
+        assertEquals(10, clampDisplayKeepAwakeMinutes(0))
+        assertEquals(20, clampDisplayKeepAwakeMinutes(29))
+        assertEquals(60, clampDisplayKeepAwakeMinutes(99))
+        assertEquals(30 * 60 * 1_000L, displayKeepAwakeDurationMillis(30))
+    }
+
+    @Test
+    fun displayKeepAwake_stopsAfterConfiguredInactivityWindow() {
+        assertTrue(
+            shouldKeepScreenAwake(
+                nowElapsedMillis = 29 * 60 * 1_000L,
+                lastInteractionElapsedMillis = 0L,
+                keepAwakeMinutes = 30
+            )
+        )
+        assertFalse(
+            shouldKeepScreenAwake(
+                nowElapsedMillis = 30 * 60 * 1_000L,
+                lastInteractionElapsedMillis = 0L,
+                keepAwakeMinutes = 30
+            )
+        )
+    }
+
+    @Test
     fun remoteBridgeService_isStickyAcrossBackgroundProcessReclaim() {
         assertEquals(Service.START_STICKY, remoteBridgeServiceStartMode())
     }
@@ -95,7 +133,7 @@ class MainActivityTest {
     @Test
     fun runningReveal_doesNotSwitchAwayFromButtons() {
         assertFalse(shouldAutoRevealCodexPage(CodexRevealReason.Running))
-        assertTrue(shouldAutoRevealCodexPage(CodexRevealReason.Completion))
+        assertFalse(shouldAutoRevealCodexPage(CodexRevealReason.Completion))
         assertTrue(shouldAutoRevealCodexPage(CodexRevealReason.Approval))
         assertTrue(shouldAutoRevealCodexPage(CodexRevealReason.Explicit))
         assertFalse(
@@ -105,13 +143,37 @@ class MainActivityTest {
                 suppressUntilElapsedMillis = 1_500L
             )
         )
-        assertTrue(
+        assertFalse(
             shouldAutoRevealCodexPage(
                 reason = CodexRevealReason.Completion,
                 nowElapsedMillis = 1_500L,
                 suppressUntilElapsedMillis = 1_500L
             )
         )
+    }
+
+    @Test
+    fun completionReveal_flashesHeaderWithoutChangingPage() {
+        assertTrue(shouldBlinkCompletionHeader(CodexRevealReason.Completion))
+        assertFalse(shouldBlinkCompletionHeader(CodexRevealReason.Running))
+        assertFalse(shouldBlinkCompletionHeader(CodexRevealReason.Approval))
+        assertFalse(shouldBlinkCompletionHeader(CodexRevealReason.Explicit))
+    }
+
+    @Test
+    fun codexWorkingStatus_usesActiveSessionCountInsteadOfTerminalActivity() {
+        assertTrue(shouldShowCodexWorkingStatus(1))
+        assertTrue(shouldShowCodexWorkingStatus(2))
+        assertFalse(shouldShowCodexWorkingStatus(0))
+        assertFalse(shouldShowCodexWorkingStatus(-1))
+    }
+
+    @Test
+    fun completionBlinkDuration_isClampedToUserSettingRange() {
+        assertEquals(MinCompletionBlinkDurationSeconds, clampCompletionBlinkDurationSeconds(0))
+        assertEquals(MinCompletionBlinkDurationSeconds, clampCompletionBlinkDurationSeconds(-2))
+        assertEquals(MaxCompletionBlinkDurationSeconds, clampCompletionBlinkDurationSeconds(99))
+        assertEquals(5_000L, completionBlinkDurationMillis(5))
     }
 
     @Test

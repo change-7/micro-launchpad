@@ -14,6 +14,13 @@ internal const val ScreenOffTimeoutStepMinutes = 10
 internal const val DefaultScreenOffConnectionOptionKey = "30m"
 internal const val IdleBlackoutTimeoutMillis = 2 * 60 * 1_000L
 internal const val DefaultIdleBlackoutEnabled = false
+internal const val MinDisplayKeepAwakeMinutes = 10
+internal const val MaxDisplayKeepAwakeMinutes = 60
+internal const val DisplayKeepAwakeStepMinutes = 10
+internal const val DefaultDisplayKeepAwakeMinutes = 30
+internal const val MinCompletionBlinkDurationSeconds = 1
+internal const val MaxCompletionBlinkDurationSeconds = 10
+internal const val DefaultCompletionBlinkDurationSeconds = 2
 
 internal val screenOffConnectionOptions =
     (MinScreenOffTimeoutMinutes..MaxScreenOffTimeoutMinutes step ScreenOffTimeoutStepMinutes)
@@ -27,6 +34,14 @@ internal enum class ScreenOffConnectionAction {
 
 internal fun screenOffConnectionAction(isInteractive: Boolean): ScreenOffConnectionAction {
     return if (isInteractive) ScreenOffConnectionAction.Resume else ScreenOffConnectionAction.ScheduleDisconnect
+}
+
+internal fun clampCompletionBlinkDurationSeconds(seconds: Int): Int {
+    return seconds.coerceIn(MinCompletionBlinkDurationSeconds, MaxCompletionBlinkDurationSeconds)
+}
+
+internal fun completionBlinkDurationMillis(seconds: Int): Long {
+    return clampCompletionBlinkDurationSeconds(seconds) * 1_000L
 }
 
 internal class RemoteBridgePreferences(context: Context) {
@@ -52,6 +67,26 @@ internal class RemoteBridgePreferences(context: Context) {
     var idleBlackoutEnabled: Boolean
         get() = preferences.getBoolean(KEY_IDLE_BLACKOUT_ENABLED, DefaultIdleBlackoutEnabled)
         set(value) { preferences.edit().putBoolean(KEY_IDLE_BLACKOUT_ENABLED, value).apply() }
+
+    var displayKeepAwakeMinutes: Int
+        get() = clampDisplayKeepAwakeMinutes(
+            preferences.getInt(KEY_DISPLAY_KEEP_AWAKE_MINUTES, DefaultDisplayKeepAwakeMinutes)
+        )
+        set(value) {
+            preferences.edit()
+                .putInt(KEY_DISPLAY_KEEP_AWAKE_MINUTES, clampDisplayKeepAwakeMinutes(value))
+                .apply()
+        }
+
+    var completionBlinkDurationSeconds: Int
+        get() = clampCompletionBlinkDurationSeconds(
+            preferences.getInt(KEY_COMPLETION_BLINK_DURATION_SECONDS, DefaultCompletionBlinkDurationSeconds)
+        )
+        set(value) {
+            preferences.edit()
+                .putInt(KEY_COMPLETION_BLINK_DURATION_SECONDS, clampCompletionBlinkDurationSeconds(value))
+                .apply()
+        }
 
     var sleepWindowStartMinutes: Int
         get() = preferences.getInt(KEY_SLEEP_WINDOW_START, 23 * 60)
@@ -81,10 +116,30 @@ internal class RemoteBridgePreferences(context: Context) {
         private const val KEY_SCREEN_OFF_OPTION = "screen_off_option"
         private const val KEY_SLEEP_WINDOW_ENABLED = "sleep_window_enabled"
         private const val KEY_IDLE_BLACKOUT_ENABLED = "idle_blackout_enabled"
+        private const val KEY_DISPLAY_KEEP_AWAKE_MINUTES = "display_keep_awake_minutes"
+        private const val KEY_COMPLETION_BLINK_DURATION_SECONDS = "completion_blink_duration_seconds"
         private const val KEY_SLEEP_WINDOW_START = "sleep_window_start"
         private const val KEY_SLEEP_WINDOW_END = "sleep_window_end"
         private const val KEY_SCREEN_OFF_STARTED_AT = "screen_off_started_at"
     }
+}
+
+internal fun clampDisplayKeepAwakeMinutes(minutes: Int): Int {
+    val clamped = minutes.coerceIn(MinDisplayKeepAwakeMinutes, MaxDisplayKeepAwakeMinutes)
+    val stepsFromMinimum = (clamped - MinDisplayKeepAwakeMinutes) / DisplayKeepAwakeStepMinutes
+    return MinDisplayKeepAwakeMinutes + stepsFromMinimum * DisplayKeepAwakeStepMinutes
+}
+
+internal fun displayKeepAwakeDurationMillis(minutes: Int): Long {
+    return clampDisplayKeepAwakeMinutes(minutes) * 60 * 1_000L
+}
+
+internal fun shouldKeepScreenAwake(
+    nowElapsedMillis: Long,
+    lastInteractionElapsedMillis: Long,
+    keepAwakeMinutes: Int
+): Boolean {
+    return nowElapsedMillis - lastInteractionElapsedMillis < displayKeepAwakeDurationMillis(keepAwakeMinutes)
 }
 
 internal fun shouldEnterIdleBlackout(
