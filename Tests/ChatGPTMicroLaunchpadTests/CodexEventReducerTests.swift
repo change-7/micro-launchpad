@@ -49,6 +49,18 @@ final class CodexEventReducerTests: XCTestCase {
         XCTAssertTrue(action.launchTargetAppIfNeeded)
     }
 
+    func testPadAction_whenClipboardTextIsMultiline_roundTripsItsPayload() throws {
+        let action = PadAction(kind: .clipboardText, value: "abc\n가나다")
+
+        let decoded = try JSONDecoder().decode(
+            PadAction.self,
+            from: JSONEncoder().encode(action)
+        )
+
+        XCTAssertEqual(decoded, action)
+        XCTAssertEqual(ActionKind.clipboardText.title, "클립보드 텍스트")
+    }
+
     func testSideButtonDefaults_assignOnlyClearMacFunctions() {
         XCTAssertEqual(PadDefaults.sideButtonDescriptor(for: "side_0")?.defaultAction?.value, "VolumeUp")
         XCTAssertEqual(PadDefaults.sideButtonDescriptor(for: "side_1")?.defaultAction?.value, "VolumeDown")

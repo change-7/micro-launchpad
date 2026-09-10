@@ -5,6 +5,7 @@ enum ActionKind: String, Codable, CaseIterable, Identifiable {
     case shortcut
     case terminalCommand
     case url
+    case clipboardText
     case none
 
     var id: String { rawValue }
@@ -14,6 +15,7 @@ enum ActionKind: String, Codable, CaseIterable, Identifiable {
         case .shortcut: "단축키 설정"
         case .terminalCommand: "터미널 명령"
         case .url: "웹페이지 이동"
+        case .clipboardText: "클립보드 텍스트"
         case .none: "없음"
         }
     }

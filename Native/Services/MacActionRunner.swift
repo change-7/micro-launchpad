@@ -9,6 +9,8 @@ enum MacActionError: LocalizedError {
     case targetAppNotRunning
     case terminalCommandNotConfigured
     case terminalCommandFailed
+    case clipboardTextNotConfigured
+    case clipboardWriteFailed
 
     var errorDescription: String? {
         switch self {
@@ -20,6 +22,8 @@ enum MacActionError: LocalizedError {
         case .targetAppNotRunning: "대상 앱이 실행 중이 아닙니다. ‘앱이 꺼져 있으면 실행’ 옵션을 켜세요."
         case .terminalCommandNotConfigured: "등록된 터미널 명령어가 없습니다."
         case .terminalCommandFailed: "터미널 명령을 실행하지 못했습니다."
+        case .clipboardTextNotConfigured: "등록된 클립보드 텍스트가 없습니다."
+        case .clipboardWriteFailed: "클립보드 텍스트를 저장하지 못했습니다."
         }
     }
 }
@@ -82,6 +86,15 @@ final class MacActionRunner {
             guard !command.isEmpty else { throw MacActionError.terminalCommandNotConfigured }
             try Self.runTerminalCommand(TerminalCommandFileStore.shellCommand(for: commandFileID ?? "") ?? command)
             return "터미널 명령을 실행했습니다."
+        case .clipboardText:
+            guard !action.value.isEmpty else { throw MacActionError.clipboardTextNotConfigured }
+            guard AXIsProcessTrusted() else { throw MacActionError.accessibilityRequired }
+            _ = NSPasteboard.general.clearContents()
+            guard NSPasteboard.general.setString(action.value, forType: .string) else {
+                throw MacActionError.clipboardWriteFailed
+            }
+            try Self.sendShortcut("cmd+v")
+            return "클립보드 텍스트를 붙여넣었습니다."
         case .none:
             return "동작이 지정되지 않았습니다."
         }

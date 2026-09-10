@@ -229,6 +229,7 @@ struct SmartphoneSettingsView: View {
                     actionButton(.shortcut)
                     actionButton(.terminalCommand)
                     actionButton(.url)
+                    actionButton(.clipboardText)
                 }
             }
             actionRegistration
@@ -305,7 +306,7 @@ struct SmartphoneSettingsView: View {
         let appBundleIdentifier: String? = switch button.action.kind {
         case .app: button.action.value
         case .shortcut: button.action.targetAppBundleIdentifier
-        case .terminalCommand, .url, .none: nil
+        case .terminalCommand, .url, .clipboardText, .none: nil
         }
 
         if button.symbol.isEmpty {
@@ -373,6 +374,20 @@ struct SmartphoneSettingsView: View {
             DarkTextField(text: actionValueBinding, placeholder: "예: open -a Safari")
         case .url:
             DarkTextField(text: actionValueBinding, placeholder: "https://example.com")
+        case .clipboardText:
+            VStack(alignment: .leading, spacing: 6) {
+                Text("버튼을 누르면 현재 활성 앱에 붙여넣습니다.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                TextEditor(text: actionValueBinding)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white)
+                    .scrollContentBackground(.hidden)
+                    .padding(7)
+                    .frame(minHeight: 92, maxHeight: 140)
+                    .background(Color(red: 0.01, green: 0.02, blue: 0.05), in: RoundedRectangle(cornerRadius: 9))
+                    .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.22)))
+            }
         case .none:
             Text("이 버튼은 휴대폰에서 비활성 상태로 표시됩니다.")
                 .font(.system(size: 10)).foregroundStyle(.secondary)

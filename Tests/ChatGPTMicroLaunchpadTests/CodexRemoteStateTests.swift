@@ -36,6 +36,27 @@ final class CodexRemoteStateTests: XCTestCase {
         XCTAssertEqual(state.fiveHourRemainingPercent, 84)
     }
 
+    func testRemoteState_whenSmartphoneButtonUsesClipboardText_omitsTextFromPhonePayload() throws {
+        var pages = SmartphoneDefaults.pages()
+        pages[2].buttons[0].action = PadAction(kind: .clipboardText, value: "비밀 텍스트\nsecret")
+
+        let state = CodexRemoteState(
+            macConnected: true,
+            codexConnected: true,
+            activity: .idle,
+            message: "대기",
+            weeklyUsage: nil,
+            fiveHourUsage: nil,
+            smartphonePages: pages
+        )
+
+        XCTAssertEqual(state.smartphonePages[2].buttons[0].action.kind, .clipboardText)
+        XCTAssertEqual(state.smartphonePages[2].buttons[0].action.value, "")
+        let wireText = String(decoding: try JSONEncoder().encode(state), as: UTF8.self)
+        XCTAssertFalse(wireText.contains("비밀 텍스트"))
+        XCTAssertFalse(wireText.contains("secret"))
+    }
+
     func testRemoteState_whenUsageIsMissing_doesNotInventPhoneUsage() {
         let state = CodexRemoteState(
             macConnected: true,

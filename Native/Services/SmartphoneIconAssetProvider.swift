@@ -15,7 +15,7 @@ enum SmartphoneIconAssetProvider {
                 bundleIdentifier = button.action.value
             case .shortcut:
                 bundleIdentifier = button.action.targetAppBundleIdentifier
-            case .terminalCommand, .url, .none:
+            case .terminalCommand, .url, .clipboardText, .none:
                 continue
             }
             guard !bundleIdentifier.isEmpty else { continue }

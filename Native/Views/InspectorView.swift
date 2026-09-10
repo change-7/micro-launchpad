@@ -74,6 +74,7 @@ struct InspectorView: View {
                         actionButton(.shortcut)
                         actionButton(.terminalCommand)
                         actionButton(.url)
+                        actionButton(.clipboardText)
                     }
                     if pad.action.kind != .none {
                         actionRegistration
@@ -214,6 +215,15 @@ struct InspectorView: View {
             DarkTextField(text: $pad.action.value, placeholder: "예: open -a Safari")
         case .url:
             DarkTextField(text: $pad.action.value, placeholder: "https://example.com")
+        case .clipboardText:
+            TextEditor(text: $pad.action.value)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.white)
+                .scrollContentBackground(.hidden)
+                .padding(7)
+                .frame(minHeight: 92, maxHeight: 140)
+                .background(Color.black.opacity(0.38), in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.18)))
         case .none:
             EmptyView()
         }
@@ -286,7 +296,7 @@ struct InspectorView: View {
 
     private func defaultValue(for kind: ActionKind) -> String {
         switch kind {
-        case .app, .shortcut, .terminalCommand: ""
+        case .app, .shortcut, .terminalCommand, .clipboardText: ""
         case .url: "https://chatgpt.com"
         case .none: ""
         }

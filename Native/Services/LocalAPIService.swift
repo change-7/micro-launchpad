@@ -533,7 +533,7 @@ enum LocalAPIAppRegistry {
             button.action.value
         case .shortcut:
             button.action.targetAppBundleIdentifier.isEmpty ? nil : button.action.targetAppBundleIdentifier
-        case .terminalCommand, .url, .none:
+        case .terminalCommand, .url, .clipboardText, .none:
             nil
         }
     }

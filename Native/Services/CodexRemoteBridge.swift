@@ -2,6 +2,20 @@ import Foundation
 import Network
 import Observation
 
+private func smartphonePagesForRemote(_ pages: [SmartphonePage]) -> [SmartphonePage] {
+    pages.map { page in
+        var sanitizedPage = page
+        sanitizedPage.buttons = page.buttons.map { button in
+            var sanitizedButton = button
+            if sanitizedButton.action.kind == .clipboardText {
+                sanitizedButton.action.value = ""
+            }
+            return sanitizedButton
+        }
+        return sanitizedPage
+    }
+}
+
 struct CodexRemoteState: Codable, Equatable, Sendable {
     let type: String
     let protocolVersion: Int
@@ -49,7 +63,7 @@ struct CodexRemoteState: Codable, Equatable, Sendable {
         self.fiveHourUsedPercent = fiveHourUsed
         self.fiveHourRemainingPercent = fiveHourUsed.map { 100 - $0 }
         self.fiveHourResetsAt = fiveHourUsage?.resetsAt
-        self.smartphonePages = smartphonePages
+        self.smartphonePages = smartphonePagesForRemote(smartphonePages)
         self.smartphoneIconAssets = smartphoneIconAssets
         self.approval = approval
         self.completionEventID = completionEventID
