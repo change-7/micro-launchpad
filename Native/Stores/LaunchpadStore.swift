@@ -129,13 +129,14 @@ final class LaunchpadStore {
         saveSmartphonePages()
     }
 
-    func resetSmartphoneButton(pageIndex: Int, buttonIndex: Int) {
+    func clearSmartphoneButton(pageIndex: Int, buttonIndex: Int) {
         guard smartphonePages.indices.contains(pageIndex),
               smartphonePages[pageIndex].buttons.indices.contains(buttonIndex) else { return }
-        smartphonePages[pageIndex].buttons[buttonIndex] = SmartphoneDefaults.defaultButton(
-            pageIndex: pageIndex,
-            buttonIndex: buttonIndex
-        )
+        var button = smartphonePages[pageIndex].buttons[buttonIndex]
+        button.title = ""
+        button.symbol = ""
+        button.action = PadAction()
+        smartphonePages[pageIndex].buttons[buttonIndex] = button
         saveSmartphonePages()
     }
 

@@ -4,7 +4,6 @@ import SwiftUI
 struct SmartphoneSettingsView: View {
     @Bindable var store: LaunchpadStore
     let runner: MacActionRunner
-    @Environment(\.dismiss) private var dismiss
     @State private var pageIndex = 0
     @State private var buttonIndex = 0
     @State private var dropTargetButtonID: String?
@@ -92,10 +91,6 @@ struct SmartphoneSettingsView: View {
             Text("Mac 64 GRID와 별도 저장")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.green)
-            Button("완료") { dismiss() }
-                .font(.system(size: 11, weight: .semibold))
-                .buttonStyle(.borderedProminent)
-                .tint(.orange)
         }
         .padding(.bottom, 4)
         .overlay(alignment: .bottom) { Divider().overlay(.white.opacity(0.16)) }
@@ -214,11 +209,11 @@ struct SmartphoneSettingsView: View {
             HStack {
                 Text("버튼 편집").font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary)
                 Spacer()
-                Button(role: .destructive) { store.resetSmartphoneButton(pageIndex: pageIndex, buttonIndex: buttonIndex) } label: {
+                Button(role: .destructive) { store.clearSmartphoneButton(pageIndex: pageIndex, buttonIndex: buttonIndex) } label: {
                     Image(systemName: "trash").frame(width: 28, height: 26)
                 }
                 .buttonStyle(.plain)
-                .help("이 스마트폰 버튼을 기본값으로 되돌립니다.")
+                .help("이 스마트폰 버튼의 이름, 아이콘, 기능을 비웁니다.")
             }
             field("버튼 라벨") { DarkTextField(text: buttonTextBinding) }
             field("아이콘 선택") { symbolPicker }
