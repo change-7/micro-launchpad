@@ -203,21 +203,20 @@ struct ContentView: View {
 
     private var launchpadToolbar: some View {
         ZStack {
-            HStack(spacing: 4) {
-                mainScreenButton(
-                    .launchpadMini,
-                    title: "런치패드 미니",
-                    systemImage: "square.grid.3x3"
-                )
-                mainScreenButton(
+            HStack(spacing: 2) {
+                mainScreenToggleButton(
                     .smartphoneButtons,
                     title: "휴대폰",
                     systemImage: "iphone"
                 )
+                mainScreenToggleButton(
+                    .launchpadMini,
+                    title: "런치패드 미니",
+                    systemImage: "square.grid.3x3"
+                )
             }
-            .padding(3)
-            .background(.regularMaterial.opacity(0.42), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.10)))
+            .frame(width: 250, height: 30)
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(.white.opacity(0.14)))
             .shadow(color: .black.opacity(0.24), radius: 8, y: 3)
             .accessibilityElement(children: .contain)
             .accessibilityLabel("화면 모드 선택")
@@ -250,7 +249,7 @@ struct ContentView: View {
         .offset(y: -24)
     }
 
-    private func mainScreenButton(
+    private func mainScreenToggleButton(
         _ screen: MainScreen,
         title: String,
         systemImage: String
@@ -261,16 +260,12 @@ struct ContentView: View {
                 Text(title)
             }
             .font(.system(size: 12, weight: .semibold))
-            .frame(width: 118, height: 32)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(RoundedRectangle(cornerRadius: 7))
             .foregroundStyle(selectedMainScreen == screen ? .white : .white.opacity(0.65))
-            .background(
-                selectedMainScreen == screen ? Color.orange.opacity(0.22) : .clear,
-                in: RoundedRectangle(cornerRadius: 7)
-            )
             .overlay(
                 RoundedRectangle(cornerRadius: 7)
-                    .stroke(selectedMainScreen == screen ? Color.orange.opacity(0.72) : .clear)
+                    .stroke(selectedMainScreen == screen ? Color.orange.opacity(0.86) : .clear, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
