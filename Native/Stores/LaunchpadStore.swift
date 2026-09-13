@@ -136,6 +136,7 @@ final class LaunchpadStore {
         button.title = ""
         button.symbol = ""
         button.action = PadAction()
+        button.folderShortcuts = []
         smartphonePages[pageIndex].buttons[buttonIndex] = button
         saveSmartphonePages()
     }
@@ -189,6 +190,59 @@ final class LaunchpadStore {
     func save() {
         guard let data = try? JSONEncoder().encode(pages) else { return }
         preferences.set(data, forKey: storageKey)
+        TerminalCommandFileStore.synchronize(macPages: pages, smartphonePages: smartphonePages)
+    }
+
+    func makeBackupData() throws -> Data {
+        let backup = LaunchpadBackup(
+            launchpadPages: pages,
+            smartphonePages: smartphonePages,
+            motionPresets: motionPresets,
+            codexMotionPresetIDs: codexMotionPresetIDs,
+            codexMotionPresentations: codexMotionPresentations,
+            codexMotionDisplaySettings: codexMotionDisplaySettings
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return try encoder.encode(backup)
+    }
+
+    func restoreBackup(from data: Data) throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let backup = try decoder.decode(LaunchpadBackup.self, from: data).validated()
+        let restoredPages = backup.launchpadPages.map(PadDefaults.normalized)
+        var restoredDisplaySettings = backup.codexMotionDisplaySettings
+        let restoredPageIDs = Set(restoredPages.map(\.id))
+        if let pageID = restoredDisplaySettings.pageID, !restoredPageIDs.contains(pageID) {
+            restoredDisplaySettings.pageID = nil
+        }
+        let restoredSmartphonePages = backup.smartphonePages.enumerated().map { index, page in
+            SmartphoneDefaults.normalized(page, at: index)
+        }
+        let encoder = JSONEncoder()
+        let pagesData = try encoder.encode(restoredPages)
+        let smartphonePagesData = try encoder.encode(restoredSmartphonePages)
+        let motionData = try encoder.encode(backup.motionPresets)
+        let presetIDsData = try encoder.encode(backup.codexMotionPresetIDs)
+        let presentationsData = try encoder.encode(backup.codexMotionPresentations)
+        let displaySettingsData = try encoder.encode(restoredDisplaySettings)
+
+        pages = restoredPages
+        smartphonePages = restoredSmartphonePages
+        motionPresets = backup.motionPresets
+        codexMotionPresetIDs = backup.codexMotionPresetIDs
+        codexMotionPresentations = backup.codexMotionPresentations
+        codexMotionDisplaySettings = restoredDisplaySettings
+
+        preferences.set(pagesData, forKey: storageKey)
+        preferences.set(smartphonePagesData, forKey: SmartphoneDefaults.storageKey)
+        preferences.set(motionData, forKey: motionStorageKey)
+        preferences.set(presetIDsData, forKey: codexMotionStorageKey)
+        preferences.set(presentationsData, forKey: codexMotionPresentationStorageKey)
+        preferences.set(displaySettingsData, forKey: codexMotionDisplaySettingsStorageKey)
+        SmartphoneDefaults.persist(smartphonePages, to: preferences)
         TerminalCommandFileStore.synchronize(macPages: pages, smartphonePages: smartphonePages)
     }
 

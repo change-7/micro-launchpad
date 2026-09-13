@@ -40,6 +40,7 @@ struct ContentView: View {
     @State private var showingPermissionAlert = false
     @State private var selectedPageLEDIndex: Int?
     @State private var showingCodexConnection = false
+    @State private var showingBackupRestore = false
     @State private var selectedMainScreen: MainScreen = .launchpadMini
     private let launchpadPanelHeight: CGFloat = 620
     @State private var virtualPreviewEnabled = true
@@ -132,6 +133,9 @@ struct ContentView: View {
                 codex: codex
             )
         }
+        .sheet(isPresented: $showingBackupRestore) {
+            BackupRestoreView(store: store)
+        }
     }
 
     private var launchpadContent: some View {
@@ -220,6 +224,15 @@ struct ContentView: View {
 
             HStack(spacing: 9) {
                 Spacer()
+                Button { showingBackupRestore = true } label: {
+                    Image(systemName: "externaldrive")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 32, height: 28)
+                        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("설정·버튼 백업 및 복구")
+                .help("Mac 버튼, 스마트폰 버튼, Codex 모션 설정을 백업하거나 복구합니다.")
                 Button { showingCodexConnection = true } label: {
                     Image(systemName: "gearshape")
                         .font(.system(size: 13, weight: .semibold))
