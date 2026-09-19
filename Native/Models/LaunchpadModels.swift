@@ -2,6 +2,7 @@ import Foundation
 
 enum ActionKind: String, Codable, CaseIterable, Identifiable {
     case app
+    case appFolder
     case shortcut
     case terminalCommand
     case url
@@ -12,6 +13,7 @@ enum ActionKind: String, Codable, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .app: "앱 실행"
+        case .appFolder: "앱 폴더"
         case .shortcut: "단축키 설정"
         case .terminalCommand: "터미널 명령"
         case .url: "웹페이지 이동"
@@ -74,6 +76,37 @@ struct PadAction: Codable, Hashable {
     }
 }
 
+struct SmartphoneFolderShortcut: Identifiable, Codable, Hashable {
+    let id: String
+    var title = ""
+    var symbol = "command"
+    var action = PadAction(kind: .shortcut)
+
+    init(
+        id: String,
+        title: String = "",
+        symbol: String = "command",
+        action: PadAction = PadAction(kind: .shortcut)
+    ) {
+        self.id = id
+        self.title = title
+        self.symbol = symbol
+        self.action = action
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, symbol, action
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
+        symbol = try container.decodeIfPresent(String.self, forKey: .symbol) ?? "command"
+        action = try container.decodeIfPresent(PadAction.self, forKey: .action) ?? PadAction(kind: .shortcut)
+    }
+}
+
 struct Pad: Identifiable, Codable, Hashable {
     let id: String
     var title = ""
@@ -99,9 +132,37 @@ struct SmartphoneButton: Identifiable, Codable, Hashable {
     var title = ""
     var symbol = "square.grid.2x2"
     var action = PadAction()
+    var folderShortcuts: [SmartphoneFolderShortcut] = []
+
+    init(
+        id: String,
+        title: String = "",
+        symbol: String = "square.grid.2x2",
+        action: PadAction = PadAction(),
+        folderShortcuts: [SmartphoneFolderShortcut] = []
+    ) {
+        self.id = id
+        self.title = title
+        self.symbol = symbol
+        self.action = action
+        self.folderShortcuts = folderShortcuts
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, symbol, action, folderShortcuts
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
+        symbol = try container.decodeIfPresent(String.self, forKey: .symbol) ?? "square.grid.2x2"
+        action = try container.decodeIfPresent(PadAction.self, forKey: .action) ?? PadAction()
+        folderShortcuts = try container.decodeIfPresent([SmartphoneFolderShortcut].self, forKey: .folderShortcuts) ?? []
+    }
 
     func configuration(at id: String) -> SmartphoneButton {
-        SmartphoneButton(id: id, title: title, symbol: symbol, action: action)
+        SmartphoneButton(id: id, title: title, symbol: symbol, action: action, folderShortcuts: folderShortcuts)
     }
 }
 

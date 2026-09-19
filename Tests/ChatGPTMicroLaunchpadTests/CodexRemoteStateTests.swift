@@ -57,6 +57,45 @@ final class CodexRemoteStateTests: XCTestCase {
         XCTAssertFalse(wireText.contains("secret"))
     }
 
+    func testRemoteState_whenSmartphoneAppFolderHasShortcuts_roundTripsAndSanitizesNestedClipboard() throws {
+        var pages = SmartphoneDefaults.pages()
+        let parentID = pages[0].buttons[0].id
+        pages[0].buttons[0].action = PadAction(kind: .appFolder, value: "com.apple.finder")
+        pages[0].buttons[0].folderShortcuts = [
+            SmartphoneFolderShortcut(
+                id: "\(parentID)_folder_0",
+                title: "새 창",
+                symbol: "plus",
+                action: PadAction(kind: .shortcut, value: "cmd+n", targetAppBundleIdentifier: "com.apple.finder")
+            ),
+            SmartphoneFolderShortcut(
+                id: "\(parentID)_folder_1",
+                title: "비밀",
+                symbol: "doc.on.clipboard",
+                action: PadAction(kind: .clipboardText, value: "비밀 단축키")
+            )
+        ]
+
+        let state = CodexRemoteState(
+            macConnected: true,
+            codexConnected: true,
+            activity: .idle,
+            message: "연결됨",
+            weeklyUsage: nil,
+            fiveHourUsage: nil,
+            smartphonePages: pages
+        )
+        let decoded = try JSONDecoder().decode(
+            CodexRemoteState.self,
+            from: JSONEncoder().encode(state)
+        )
+
+        XCTAssertEqual(decoded.smartphonePages[0].buttons[0].action.kind, .appFolder)
+        XCTAssertEqual(decoded.smartphonePages[0].buttons[0].folderShortcuts.count, 2)
+        XCTAssertEqual(decoded.smartphonePages[0].buttons[0].folderShortcuts[0].action.value, "cmd+n")
+        XCTAssertEqual(decoded.smartphonePages[0].buttons[0].folderShortcuts[1].action.value, "")
+    }
+
     func testRemoteState_whenUsageIsMissing_doesNotInventPhoneUsage() {
         let state = CodexRemoteState(
             macConnected: true,
@@ -116,6 +155,31 @@ final class CodexRemoteStateTests: XCTestCase {
             storedButton
         )
         XCTAssertNil(SmartphoneDefaults.button(id: "missing-button", in: pages))
+    }
+
+    func testSmartphoneDefaults_resolvesNestedFolderShortcutIDs() {
+        var pages = SmartphoneDefaults.pages()
+        let parentID = pages[0].buttons[0].id
+        let shortcut = SmartphoneFolderShortcut(
+            id: "\(parentID)_folder_0",
+            title: "새 창",
+            action: PadAction(kind: .shortcut, value: "cmd+n")
+        )
+        pages[0].buttons[0].folderShortcuts = [shortcut]
+
+        XCTAssertEqual(SmartphoneDefaults.action(id: parentID, in: pages), pages[0].buttons[0].action)
+        XCTAssertEqual(SmartphoneDefaults.action(id: shortcut.id, in: pages), shortcut.action)
+        XCTAssertNil(SmartphoneDefaults.action(id: "missing-button", in: pages))
+    }
+
+    func testSmartphoneButton_decodesLegacyPayloadWithoutFolderShortcuts() throws {
+        let legacyPayload = #"{"id":"smartphone_page_0_button_0","title":"기존 버튼","symbol":"play.fill","action":{"kind":"shortcut","value":"cmd+r"}}"#.data(using: .utf8)!
+
+        let button = try JSONDecoder().decode(SmartphoneButton.self, from: legacyPayload)
+
+        XCTAssertEqual(button.title, "기존 버튼")
+        XCTAssertEqual(button.action.value, "cmd+r")
+        XCTAssertTrue(button.folderShortcuts.isEmpty)
     }
 
     func testPadAction_repairsLegacyAppBundleIDStoredAsShortcutValue() {
@@ -231,6 +295,41 @@ final class CodexRemoteStateTests: XCTestCase {
 
         XCTAssertNotNil(assets["smartphone_page_0_button_0"])
         XCTAssertEqual(assets["smartphone_page_0_button_0"]?.mimeType, "image/png")
+    }
+
+    @MainActor
+    func testSmartphoneIconAssetProvider_buildsSFSymbolAssetsForNonAppButtons() {
+        var pages = SmartphoneDefaults.pages()
+        pages[0].buttons[0] = SmartphoneButton(
+            id: "smartphone_page_0_button_0",
+            title: "위",
+            symbol: "arrow.up",
+            action: PadAction(kind: .shortcut, value: "cmd+up")
+        )
+
+        let assets = SmartphoneIconAssetProvider.assets(for: pages)
+
+        XCTAssertNotNil(assets["smartphone_page_0_button_0"])
+        XCTAssertEqual(assets["smartphone_page_0_button_0"]?.kind, "sf-symbol")
+        XCTAssertEqual(assets["smartphone_page_0_button_0"]?.mimeType, "image/png")
+    }
+
+    @MainActor
+    func testSmartphoneIconAssetProvider_buildsSFSymbolAssetsForFolderShortcuts() {
+        var pages = SmartphoneDefaults.pages()
+        pages[0].buttons[0].folderShortcuts = [
+            SmartphoneFolderShortcut(
+                id: "smartphone_page_0_button_0_folder_0",
+                title: "위로",
+                symbol: "arrow.up",
+                action: PadAction(kind: .shortcut, value: "cmd+up")
+            )
+        ]
+
+        let assets = SmartphoneIconAssetProvider.assets(for: pages)
+
+        XCTAssertNotNil(assets["smartphone_page_0_button_0_folder_0"])
+        XCTAssertEqual(assets["smartphone_page_0_button_0_folder_0"]?.kind, "sf-symbol")
     }
 
     func testRemoteState_transmitsPendingApprovalPrompt() throws {

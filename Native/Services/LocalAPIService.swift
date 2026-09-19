@@ -529,7 +529,7 @@ enum LocalAPIAppRegistry {
 
     private static func bundleIdentifier(for button: SmartphoneButton) -> String? {
         switch button.action.kind {
-        case .app:
+        case .app, .appFolder:
             button.action.value
         case .shortcut:
             button.action.targetAppBundleIdentifier.isEmpty ? nil : button.action.targetAppBundleIdentifier

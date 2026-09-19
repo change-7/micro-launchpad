@@ -206,10 +206,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let codex: CodexAppServerClient
     let codexActivityController: CodexActivityController
     let launchpadLEDBubble = LaunchpadLEDStatusBubble()
+    private let codexStatusBarIndicator = CodexStatusBarIndicator()
     private let remoteActionRunner = MacActionRunner()
     private let connectionStarter: any CodexAppServerConnectionStarting
     private weak var mainWindow: NSWindow?
     private var statusItem: NSStatusItem?
+    private weak var codexStatusMotionMenuItem: NSMenuItem?
     private weak var launchpadLEDBubbleMenuItem: NSMenuItem?
     private var localAPIServer: LocalAPIServer?
     private var allowsTermination = false
@@ -241,12 +243,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
+        guard !terminateDuplicateInstanceIfNeeded() else { return }
         if isBridgeOnly {
             NSApp.setActivationPolicy(.prohibited)
         } else {
             installMenuBarItem()
         }
-        codexActivityController.onActivityChange = { [weak codex] activity in
+        codexActivityController.onActivityChange = { [weak self, weak codex] activity in
+            self?.codexStatusBarIndicator.update(activity: activity)
             codex?.publishRemoteActivity(activity)
         }
         codexActivityController.onTaskCompletion = { [weak codex] taskID in
@@ -257,12 +261,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         codexActivityController.startDesktopMonitoring()
         codex.publishRemoteSessionCount(codexActivityController.activeSessionCount)
+        codexStatusBarIndicator.update(activity: codexActivityController.activity)
         codex.publishRemoteActivity(codexActivityController.activity)
         codex.startRemoteBridge()
         localAPIServer?.start()
         guard !hasStartedCodexConnection else { return }
         hasStartedCodexConnection = true
         connectionStarter.connect()
+    }
+
+    private func terminateDuplicateInstanceIfNeeded() -> Bool {
+        guard !isBridgeOnly,
+              let bundleIdentifier = Bundle.main.bundleIdentifier else { return false }
+        let currentPID = ProcessInfo.processInfo.processIdentifier
+        guard let existing = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleIdentifier)
+            .first(where: { $0.processIdentifier != currentPID }) else { return false }
+
+        existing.activate(options: [.activateAllWindows])
+        allowsTermination = true
+        NSApp.terminate(nil)
+        return true
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -363,10 +382,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             switch command.command {
             case "smartphoneButton":
                 guard let buttonID = command.buttonID,
-                      let button = SmartphoneDefaults.button(id: buttonID, in: SmartphoneDefaults.persistedPages()) else {
+                      let action = SmartphoneDefaults.action(id: buttonID, in: SmartphoneDefaults.persistedPages()) else {
                     return CodexRemoteCommandResult(id: command.id, success: false, message: "스마트폰 버튼 설정을 찾을 수 없습니다.")
                 }
-                message = try remoteActionRunner.execute(button.action, commandFileID: button.id)
+                message = try remoteActionRunner.execute(action, commandFileID: buttonID)
             case "codexApproval":
                 guard let decision = command.decision else {
                     return CodexRemoteCommandResult(id: command.id, success: false, message: "Codex 승인 응답이 없습니다.")
@@ -426,6 +445,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         let menu = NSMenu()
         menu.addItem(withTitle: "설정 창 열기", action: #selector(openMainWindowFromMenu), keyEquivalent: "")
+        let statusMotionItem = menu.addItem(
+            withTitle: "Codex 상태 표시 모션",
+            action: #selector(toggleCodexStatusMotionFromMenu),
+            keyEquivalent: ""
+        )
+        statusMotionItem.state = codexStatusBarIndicator.isEnabled ? .on : .off
+        statusMotionItem.toolTip = "작업중·오류·확인 필요 상태를 상태바 아이콘으로 표시합니다."
+        codexStatusMotionMenuItem = statusMotionItem
         let bubbleItem = menu.addItem(
             withTitle: "LED 말풍선 표시",
             action: #selector(toggleLaunchpadLEDBubbleFromMenu),
@@ -445,6 +472,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.items.forEach { $0.target = self }
         item.menu = menu
         statusItem = item
+        codexStatusBarIndicator.attach(to: item.button)
         launchpadLEDBubble.attach(to: item.button)
     }
 
@@ -458,6 +486,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func toggleLaunchpadLEDBubbleFromMenu() {
         launchpadLEDBubble.toggleVisibilityPreference()
+    }
+
+    @objc private func toggleCodexStatusMotionFromMenu() {
+        codexStatusBarIndicator.setEnabled(!codexStatusBarIndicator.isEnabled)
+        codexStatusMotionMenuItem?.state = codexStatusBarIndicator.isEnabled ? .on : .off
     }
 
     @objc private func copyLocalAPITokenToPasteboard() {

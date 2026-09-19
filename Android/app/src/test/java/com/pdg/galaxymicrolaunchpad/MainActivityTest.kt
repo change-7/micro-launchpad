@@ -256,6 +256,13 @@ class MainActivityTest {
     }
 
     @Test
+    fun blackoutIndicator_blinksOnlyWhileCodexIsWorking() {
+        assertEquals(1f, blackoutIndicatorAlpha(isCodexWorking = false, progress = 0f), 0.001f)
+        assertEquals(0.18f, blackoutIndicatorAlpha(isCodexWorking = true, progress = 0f), 0.001f)
+        assertEquals(1f, blackoutIndicatorAlpha(isCodexWorking = true, progress = 1f), 0.001f)
+    }
+
+    @Test
     fun codexCompletionSound_usesTheSystemNotificationStream() {
         assertEquals(RingtoneManager.TYPE_NOTIFICATION, completionNotificationSoundType())
     }
@@ -342,6 +349,32 @@ class MainActivityTest {
     }
 
     @Test
+    fun folderGrid_keepsParentFirstAndPadsToFourByFour() {
+        val folder = ControlAction(
+            label = "앱 폴더",
+            icon = iconForSymbol("folder"),
+            command = "smartphoneButton",
+            id = "folder-1",
+            folderActions = listOf(
+                ControlAction(
+                    label = "단축키",
+                    icon = iconForSymbol("command"),
+                    command = "smartphoneButton",
+                    id = "shortcut-1"
+                )
+            )
+        )
+
+        val items = folderGridItems(folder)
+
+        assertEquals(16, items.size)
+        assertEquals("상위 폴더", items.first().label)
+        assertEquals("closeFolder", items.first().command)
+        assertEquals("단축키", items[1].label)
+        assertTrue(items.drop(2).all { it.isPlaceholder })
+    }
+
+    @Test
     fun remoteBridgeReadTimeout_disconnectsAfterHeartbeatAlsoGoesUnanswered() {
         assertFalse(shouldDisconnectAfterReadTimeout(consecutiveTimeouts = 1))
         assertTrue(shouldDisconnectAfterReadTimeout(consecutiveTimeouts = 2))
@@ -353,6 +386,38 @@ class MainActivityTest {
         assertEquals(0, clampUsagePercent(-4))
         assertEquals(100, clampUsagePercent(140))
         assertEquals(null, clampUsagePercent(null))
+    }
+
+    @Test
+    fun remainingDuration_formatsHoursAndLongerWeeklyWindows() {
+        assertEquals(
+            "5시간 20분",
+            formatRemainingDuration(resetEpochSeconds = 5 * 60 * 60 + 20 * 60.0, nowEpochSeconds = 0L)
+        )
+        assertEquals(
+            "1일+2시간",
+            formatRemainingDuration(resetEpochSeconds = 26 * 60 * 60.0, nowEpochSeconds = 0L)
+        )
+        assertEquals(
+            "1일",
+            formatRemainingDuration(resetEpochSeconds = 24 * 60 * 60.0, nowEpochSeconds = 0L)
+        )
+    }
+
+    @Test
+    fun remainingDuration_roundsUpShortWindowsAndHandlesMissingOrExpiredResets() {
+        assertEquals(
+            "1분",
+            formatRemainingDuration(resetEpochSeconds = 30.0, nowEpochSeconds = 0L)
+        )
+        assertEquals(
+            "곧 갱신",
+            formatRemainingDuration(resetEpochSeconds = 0.0, nowEpochSeconds = 1L)
+        )
+        assertEquals(
+            "—",
+            formatRemainingDuration(resetEpochSeconds = null, nowEpochSeconds = 0L)
+        )
     }
 
 }

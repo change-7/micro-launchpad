@@ -66,7 +66,7 @@ final class ShortcutRecorder {
 }
 
 private enum RecordedModifier: CaseIterable, Hashable {
-    case command, control, shift, option
+    case command, control, shift, option, function
 
     var flag: NSEvent.ModifierFlags {
         switch self {
@@ -74,6 +74,7 @@ private enum RecordedModifier: CaseIterable, Hashable {
         case .control: .control
         case .shift: .shift
         case .option: .option
+        case .function: .function
         }
     }
 
@@ -83,6 +84,7 @@ private enum RecordedModifier: CaseIterable, Hashable {
         case .control: "Ctrl"
         case .shift: "Shift"
         case .option: "Option"
+        case .function: "Fn"
         }
     }
 
@@ -92,6 +94,7 @@ private enum RecordedModifier: CaseIterable, Hashable {
         case 59, 62: self = .control
         case 56, 60: self = .shift
         case 58, 61: self = .option
+        case 63, 179: self = .function
         default: return nil
         }
     }
@@ -105,6 +108,7 @@ enum ShortcutNotation {
         if modifiers.contains(.control) { parts.append("Ctrl") }
         if modifiers.contains(.option) { parts.append("Option") }
         if modifiers.contains(.shift) { parts.append("Shift") }
+        if modifiers.contains(.function) { parts.append("Fn") }
         return parts.joined(separator: "+")
     }
 

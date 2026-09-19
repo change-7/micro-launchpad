@@ -191,7 +191,7 @@ struct InspectorView: View {
 
     @ViewBuilder private var actionRegistration: some View {
         switch pad.action.kind {
-        case .app:
+        case .app, .appFolder:
             VStack(alignment: .leading, spacing: 8) {
                 Button("앱 등록") { registerApplication() }
                     .font(.system(size: 12, weight: .semibold))
@@ -296,7 +296,7 @@ struct InspectorView: View {
 
     private func defaultValue(for kind: ActionKind) -> String {
         switch kind {
-        case .app, .shortcut, .terminalCommand, .clipboardText: ""
+        case .app, .appFolder, .shortcut, .terminalCommand, .clipboardText: ""
         case .url: "https://chatgpt.com"
         case .none: ""
         }

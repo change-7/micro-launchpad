@@ -60,13 +60,13 @@ case "$MODE" in
   run)
     assemble_bundle "$DEVELOPMENT_APP_BUNDLE" "$DEVELOPMENT_BUNDLE_ID" "$APP_DISPLAY_NAME 개발"
     /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$DEVELOPMENT_APP_BUNDLE"
-    /usr/bin/open -n -a "$DEVELOPMENT_APP_BUNDLE"
+    /usr/bin/open -a "$DEVELOPMENT_APP_BUNDLE"
     ;;
   --package|package) ;;
   --verify|verify)
     assemble_bundle "$DEVELOPMENT_APP_BUNDLE" "$DEVELOPMENT_BUNDLE_ID" "$APP_DISPLAY_NAME 개발"
     /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$DEVELOPMENT_APP_BUNDLE"
-    /usr/bin/open -n -a "$DEVELOPMENT_APP_BUNDLE"
+    /usr/bin/open -a "$DEVELOPMENT_APP_BUNDLE"
     sleep 1
     pgrep -f "/\\.build/.*/Contents/MacOS/$APP_NAME$" >/dev/null
     ;;

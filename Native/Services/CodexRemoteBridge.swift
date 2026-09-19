@@ -10,6 +10,13 @@ private func smartphonePagesForRemote(_ pages: [SmartphonePage]) -> [SmartphoneP
             if sanitizedButton.action.kind == .clipboardText {
                 sanitizedButton.action.value = ""
             }
+            sanitizedButton.folderShortcuts = button.folderShortcuts.map { shortcut in
+                var sanitizedShortcut = shortcut
+                if sanitizedShortcut.action.kind == .clipboardText {
+                    sanitizedShortcut.action.value = ""
+                }
+                return sanitizedShortcut
+            }
             return sanitizedButton
         }
         return sanitizedPage

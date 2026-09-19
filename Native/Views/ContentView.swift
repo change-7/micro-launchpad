@@ -41,7 +41,7 @@ struct ContentView: View {
     @State private var selectedPageLEDIndex: Int?
     @State private var showingCodexConnection = false
     @State private var showingBackupRestore = false
-    @State private var selectedMainScreen: MainScreen = .launchpadMini
+    @State private var selectedMainScreen: MainScreen = .smartphoneButtons
     private let launchpadPanelHeight: CGFloat = 620
     @State private var virtualPreviewEnabled = true
     @State private var virtualMotion = VirtualMotionPlayer()

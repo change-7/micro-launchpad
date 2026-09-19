@@ -16,12 +16,18 @@ struct ShortcutComposerView: View {
                 shortcutRegistrationButton
             }
 
+            windowActionPicker
+
             targetApplicationStatus
 
             HStack {
-                Text(draft.isEmpty ? "입력 대기" : draft)
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                    .foregroundStyle(draft.isEmpty ? Color.secondary : Color.orange)
+                if let windowAction = MacWindowAction(rawValue: draft) {
+                    MacShortcutGlyphs(action: windowAction, tint: .orange)
+                } else {
+                    Text(previewLabel)
+                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        .foregroundStyle(draft.isEmpty ? Color.secondary : Color.orange)
+                }
                 Spacer()
                 if recorder.isRecording {
                     ProgressView().controlSize(.small)
@@ -72,6 +78,56 @@ struct ShortcutComposerView: View {
             onPreview: { draft = $0 },
             onCapture: { draft = $0 }
         )
+    }
+
+    private var windowActionPicker: some View {
+        Menu {
+            Section("맥 창 동작") {
+                ForEach(MacWindowAction.allCases) { action in
+                    Button {
+                        recorder.stop()
+                        draft = action.rawValue
+                        value = action.rawValue
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: action.symbol)
+                                .frame(width: 18)
+                            Text(action.title)
+                            Spacer(minLength: 12)
+                            MacShortcutGlyphs(action: action)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("\(action.title), \(action.shortcutDisplay)")
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: selectedWindowAction?.symbol ?? "macwindow")
+                    .foregroundStyle(selectedWindowAction == nil ? Color.secondary : Color.orange)
+                if let selectedWindowAction {
+                    Text(selectedWindowAction.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                    MacShortcutGlyphs(action: selectedWindowAction)
+                } else {
+                    Text("맥 창 동작 선택")
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .foregroundStyle(.white)
+            .background(.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 8))
+        }
+        .menuStyle(.borderlessButton)
+        .help("직접 입력한 단축키 대신 맥 창 배치 동작을 선택합니다.")
+        .accessibilityLabel("맥 창 동작 선택")
     }
 
     private var targetApplicationButton: some View {
@@ -151,6 +207,14 @@ struct ShortcutComposerView: View {
         return AppRegistrationService.displayName(for: targetAppBundleIdentifier) ?? targetAppBundleIdentifier
     }
 
+    private var selectedWindowAction: MacWindowAction? {
+        MacWindowAction(rawValue: value)
+    }
+
+    private var previewLabel: String {
+        return draft.isEmpty ? "입력 대기" : draft
+    }
+
     private func registerTargetApplication() {
         targetAppRegistrationError = ""
         AppRegistrationService.chooseApplication { result in
@@ -161,5 +225,28 @@ struct ShortcutComposerView: View {
                 targetAppRegistrationError = error.localizedDescription
             }
         }
+    }
+}
+
+private struct MacShortcutGlyphs: View {
+    let action: MacWindowAction
+    var tint: Color = .secondary
+
+    var body: some View {
+        HStack(spacing: 3) {
+            if action == .fullScreen {
+                Text(action.shortcutArrow)
+            } else {
+                Text("⌃")
+                Image(systemName: "globe")
+                if action.shortcutUsesShift {
+                    Text("⇧")
+                }
+                Text(action.shortcutArrow)
+            }
+        }
+        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+        .foregroundStyle(tint)
+        .fixedSize()
     }
 }

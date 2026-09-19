@@ -8,6 +8,7 @@ struct SmartphoneSettingsView: View {
     @State private var buttonIndex = 0
     @State private var dropTargetButtonID: String?
     @State private var registrationError = ""
+    @State private var folderButtonID: String?
 
     private let symbolChoices = [
         // 아이콘 없음
@@ -78,6 +79,29 @@ struct SmartphoneSettingsView: View {
         .foregroundStyle(.white)
         .background(Color(red: 0.035, green: 0.035, blue: 0.045))
         .onChange(of: pageIndex) { _, _ in buttonIndex = 0 }
+        .overlay {
+            if let folderButtonID {
+                ZStack {
+                    Color.black.opacity(0.34)
+                        .ignoresSafeArea()
+                        .contentShape(Rectangle())
+                        .onTapGesture { self.folderButtonID = nil }
+
+                    SmartphoneFolderEditorView(
+                        store: store,
+                        pageIndex: pageIndex,
+                        folderButtonID: folderButtonID
+                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture { }
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.14)))
+                    .shadow(color: .black.opacity(0.55), radius: 28, y: 12)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                .zIndex(100)
+            }
+        }
     }
 
     private var header: some View {
@@ -140,60 +164,7 @@ struct SmartphoneSettingsView: View {
             }
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
                 ForEach(Array(page.buttons.enumerated()), id: \.element.id) { index, button in
-                    Button { buttonIndex = index } label: {
-                        VStack(spacing: 6) {
-                            buttonIcon(for: button, isSelected: index == buttonIndex)
-                            if !button.title.isEmpty {
-                                Text(button.title)
-                                    .font(.system(size: 11, weight: .medium))
-                                    .lineLimit(1)
-                            }
-                            if button.action.kind != .none {
-                                Text(button.action.kind.title)
-                                    .font(.system(size: 9, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 78)
-                        .padding(7)
-                        .background(index == buttonIndex ? Color.orange.opacity(0.15) : Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 9))
-                        .overlay(RoundedRectangle(cornerRadius: 9).stroke(index == buttonIndex ? .orange : .white.opacity(0.12), lineWidth: index == buttonIndex ? 1.5 : 1))
-                        .overlay(alignment: .topTrailing) {
-                            Image(systemName: "line.3.horizontal")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(.white.opacity(0.38))
-                                .padding(7)
-                        }
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 9)
-                                .stroke(.orange, lineWidth: 2)
-                                .opacity(dropTargetButtonID == button.id ? 1 : 0)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(button.title.isEmpty ? "비어 있는 스마트폰 버튼 슬롯" : button.title)
-                    .accessibilityHint("드래그하여 버튼 위치를 바꿀 수 있습니다.")
-                    .draggable(button.id)
-                    .dropDestination(for: String.self) { items, _ in
-                        guard let sourceID = items.first else { return false }
-                        dropTargetButtonID = nil
-                        guard sourceID != button.id,
-                              store.swapSmartphoneButtonConfigurations(
-                                pageIndex: pageIndex,
-                                from: sourceID,
-                                to: button.id
-                              ) else {
-                            return false
-                        }
-                        buttonIndex = index
-                        return true
-                    } isTargeted: { isTargeted in
-                        if isTargeted {
-                            dropTargetButtonID = button.id
-                        } else if dropTargetButtonID == button.id {
-                            dropTargetButtonID = nil
-                        }
-                    }
+                    buttonCell(index: index, button: button)
                 }
             }
             Spacer()
@@ -202,6 +173,68 @@ struct SmartphoneSettingsView: View {
         .padding(12)
         .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.08)))
+    }
+
+    private func buttonCell(index: Int, button: SmartphoneButton) -> some View {
+        Button {
+            buttonIndex = index
+            if button.action.kind == .appFolder {
+                folderButtonID = button.id
+            }
+        } label: {
+            VStack(spacing: 6) {
+                buttonIcon(for: button, isSelected: index == buttonIndex)
+                if !button.title.isEmpty {
+                    Text(button.title)
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                }
+                if button.action.kind != .none {
+                    Text(button.action.kind.title)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 78)
+            .padding(7)
+            .background(index == buttonIndex ? Color.orange.opacity(0.15) : Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 9))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(index == buttonIndex ? .orange : .white.opacity(0.12), lineWidth: index == buttonIndex ? 1.5 : 1))
+            .overlay(alignment: .topTrailing) {
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.38))
+                    .padding(7)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 9)
+                    .stroke(.orange, lineWidth: 2)
+                    .opacity(dropTargetButtonID == button.id ? 1 : 0)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(button.title.isEmpty ? "비어 있는 스마트폰 버튼 슬롯" : button.title)
+        .accessibilityHint("드래그하여 버튼 위치를 바꿀 수 있습니다.")
+        .draggable(button.id)
+        .dropDestination(for: String.self) { items, _ in
+            guard let sourceID = items.first else { return false }
+            dropTargetButtonID = nil
+            guard sourceID != button.id,
+                  store.swapSmartphoneButtonConfigurations(
+                    pageIndex: pageIndex,
+                    from: sourceID,
+                    to: button.id
+                  ) else {
+                return false
+            }
+            buttonIndex = index
+            return true
+        } isTargeted: { isTargeted in
+            if isTargeted {
+                dropTargetButtonID = button.id
+            } else if dropTargetButtonID == button.id {
+                dropTargetButtonID = nil
+            }
+        }
     }
 
     private var editor: some View {
@@ -225,6 +258,7 @@ struct SmartphoneSettingsView: View {
                     actionButton(.terminalCommand)
                     actionButton(.url)
                     actionButton(.clipboardText)
+                    actionButton(.appFolder)
                 }
             }
             actionRegistration
@@ -296,10 +330,89 @@ struct SmartphoneSettingsView: View {
         }
     }
 
+    private var folderShortcutEditor: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Text("폴더 안 단축키")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.72))
+                Spacer()
+                Button {
+                    addFolderShortcut()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .bold))
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.orange)
+                .help("앱 폴더에 단축키를 추가합니다.")
+            }
+            if selectedButton.folderShortcuts.isEmpty {
+                Text("등록된 단축키가 없습니다.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            } else {
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(selectedButton.folderShortcuts) { shortcut in
+                            folderShortcutRow(shortcut)
+                        }
+                    }
+                }
+                .frame(maxHeight: 260)
+            }
+        }
+        .padding(9)
+        .background(.black.opacity(0.24), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.12)))
+    }
+
+    private func folderShortcutRow(_ shortcut: SmartphoneFolderShortcut) -> some View {
+        let binding = folderShortcutBinding(id: shortcut.id)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                TextField("단축키 이름", text: binding.title)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 5)
+                    .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
+                Button(role: .destructive) {
+                    removeFolderShortcut(id: shortcut.id)
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .help("이 단축키를 삭제합니다.")
+            }
+            HStack(spacing: 6) {
+                Image(systemName: binding.wrappedValue.symbol.isEmpty ? "command" : binding.wrappedValue.symbol)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.orange)
+                TextField("SF Symbol", text: binding.symbol)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 10, design: .monospaced))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 5)
+                    .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
+            }
+            ShortcutComposerView(
+                value: binding.action.value,
+                targetAppBundleIdentifier: binding.action.targetAppBundleIdentifier,
+                launchTargetAppIfNeeded: binding.action.launchTargetAppIfNeeded
+            )
+        }
+        .padding(7)
+        .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 7))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(.white.opacity(0.08)))
+    }
+
     @ViewBuilder
     private func buttonIcon(for button: SmartphoneButton, isSelected: Bool) -> some View {
         let appBundleIdentifier: String? = switch button.action.kind {
-        case .app: button.action.value
+        case .app, .appFolder: button.action.value
         case .shortcut: button.action.targetAppBundleIdentifier
         case .terminalCommand, .url, .clipboardText, .none: nil
         }
@@ -340,6 +453,7 @@ struct SmartphoneSettingsView: View {
                 button.action.targetAppBundleIdentifier = ""
             }
             if kind != .shortcut { button.action.targetAppBundleIdentifier = "" }
+            if kind != .appFolder { button.folderShortcuts = [] }
             update(button)
         }
         .font(.system(size: 10, weight: .semibold))
@@ -352,8 +466,10 @@ struct SmartphoneSettingsView: View {
 
     @ViewBuilder private var actionRegistration: some View {
         switch selectedButton.action.kind {
-        case .app:
-            Button("앱 등록") { registerApplication() }
+        case .app, .appFolder:
+            Button(selectedButton.action.kind == .appFolder ? "앱 폴더 등록" : "앱 등록") {
+                registerApplication(kind: selectedButton.action.kind)
+            }
                 .font(.system(size: 11, weight: .semibold))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
@@ -362,6 +478,9 @@ struct SmartphoneSettingsView: View {
             if !selectedButton.action.value.isEmpty {
                 Text(AppRegistrationService.displayName(for: selectedButton.action.value) ?? selectedButton.action.value)
                     .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            if selectedButton.action.kind == .appFolder {
+                folderShortcutEditor
             }
         case .shortcut:
             ShortcutComposerView(value: actionValueBinding, targetAppBundleIdentifier: targetAppBinding, launchTargetAppIfNeeded: launchTargetBinding)
@@ -396,18 +515,60 @@ struct SmartphoneSettingsView: View {
     private var targetAppBinding: Binding<String> { Binding(get: { selectedButton.action.targetAppBundleIdentifier }, set: { var button = selectedButton; button.action.targetAppBundleIdentifier = $0; update(button) }) }
     private var launchTargetBinding: Binding<Bool> { Binding(get: { selectedButton.action.launchTargetAppIfNeeded }, set: { var button = selectedButton; button.action.launchTargetAppIfNeeded = $0; update(button) }) }
 
+    private func folderShortcutBinding(id: String) -> Binding<SmartphoneFolderShortcut> {
+        Binding(
+            get: {
+                selectedButton.folderShortcuts.first(where: { $0.id == id })
+                    ?? SmartphoneFolderShortcut(id: id)
+            },
+            set: { shortcut in
+                var button = selectedButton
+                guard let index = button.folderShortcuts.firstIndex(where: { $0.id == id }) else { return }
+                button.folderShortcuts[index] = shortcut
+                update(button)
+            }
+        )
+    }
+
     private func update(_ button: SmartphoneButton) { store.updateSmartphoneButton(button, at: pageIndex) }
 
-    private func registerApplication() {
+    private func addFolderShortcut() {
+        var button = selectedButton
+        let shortcut = SmartphoneFolderShortcut(
+            id: "\(button.id)_folder_\(UUID().uuidString)",
+            title: "단축키 \(button.folderShortcuts.count + 1)",
+            symbol: "command",
+            action: PadAction(kind: .shortcut, targetAppBundleIdentifier: button.action.value)
+        )
+        button.folderShortcuts.append(shortcut)
+        update(button)
+    }
+
+    private func removeFolderShortcut(id: String) {
+        var button = selectedButton
+        button.folderShortcuts.removeAll { $0.id == id }
+        update(button)
+    }
+
+    private func registerApplication(kind: ActionKind = .app) {
         registrationError = ""
         AppRegistrationService.chooseApplication { result in
             switch result {
             case .success(let application):
                 var button = selectedButton
-                button.action.kind = .app
+                button.action.kind = kind
                 button.action.value = application.bundleIdentifier
                 button.action.targetAppBundleIdentifier = ""
                 if button.title.isEmpty { button.title = application.name }
+                if kind == .appFolder {
+                    button.folderShortcuts = button.folderShortcuts.map { shortcut in
+                        var updatedShortcut = shortcut
+                        updatedShortcut.action.targetAppBundleIdentifier = application.bundleIdentifier
+                        return updatedShortcut
+                    }
+                } else {
+                    button.folderShortcuts = []
+                }
                 update(button)
             case .failure(let error): registrationError = error.localizedDescription
             }

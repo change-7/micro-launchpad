@@ -70,6 +70,39 @@ internal fun parseSmartphonePages(
                     val actionObject = buttonObject.optJSONObject("action")
                     val kind = actionObject?.optString("kind", "none") ?: "none"
                     val buttonID = buttonObject.optString("id", "smartphone_page_${pageIndex}_button_${buttonIndex}")
+                    val folderActions = buildList {
+                        val shortcutArray = buttonObject.optJSONArray("folderShortcuts") ?: return@buildList
+                        for (shortcutIndex in 0 until shortcutArray.length()) {
+                            val shortcutObject = shortcutArray.optJSONObject(shortcutIndex) ?: continue
+                            val shortcutTitle = shortcutObject.optString("title", "")
+                            val shortcutID = shortcutObject.optString(
+                                "id",
+                                "${buttonID}_folder_$shortcutIndex"
+                            )
+                            val shortcutSymbol = shortcutObject.optString("symbol", "command")
+                            val shortcutAction = shortcutObject.optJSONObject("action")
+                            add(
+                                ControlAction(
+                                    label = shortcutTitle,
+                                    icon = iconForSymbol(shortcutSymbol),
+                                    command = "smartphoneButton",
+                                    accent = Color.White,
+                                    id = shortcutID,
+                                    actionKind = shortcutAction?.optString("kind", "none") ?: "none",
+                                    actionValue = shortcutAction?.optString("value", "") ?: "",
+                                    targetAppBundleIdentifier = shortcutAction?.optString("targetAppBundleIdentifier", "") ?: "",
+                                    launchTargetAppIfNeeded = shortcutAction?.optBoolean("launchTargetAppIfNeeded", true) ?: true,
+                                    iconBitmap = if (isSmartphoneButtonPlaceholder(shortcutTitle)) {
+                                        null
+                                    } else {
+                                        parseSmartphoneIconAsset(state, shortcutID, iconBitmapCache, iconAssets)
+                                    },
+                                    isPlaceholder = isSmartphoneButtonPlaceholder(shortcutTitle),
+                                    isIconless = isIconlessSymbol(shortcutSymbol)
+                                )
+                            )
+                        }
+                    }
                     add(
                         ControlAction(
                             label = title,
@@ -81,6 +114,7 @@ internal fun parseSmartphonePages(
                             actionValue = actionObject?.optString("value", "") ?: "",
                             targetAppBundleIdentifier = actionObject?.optString("targetAppBundleIdentifier", "") ?: "",
                             launchTargetAppIfNeeded = actionObject?.optBoolean("launchTargetAppIfNeeded", true) ?: true,
+                            folderActions = folderActions,
                             iconBitmap = if (isPlaceholder) null else parseSmartphoneIconAsset(state, buttonID, iconBitmapCache, iconAssets),
                             isPlaceholder = isPlaceholder,
                             isIconless = isIconlessSymbol(buttonObject.optString("symbol", ""))
@@ -201,4 +235,9 @@ internal fun isCodexCompletionEvent(
 internal fun codexHeaderPulseAlpha(activity: String, progress: Float): Float {
     if (normalizeRemoteActivity(activity) != "running") return 1f
     return 0.58f + progress.coerceIn(0f, 1f) * 0.42f
+}
+
+internal fun blackoutIndicatorAlpha(isCodexWorking: Boolean, progress: Float): Float {
+    if (!isCodexWorking) return 1f
+    return 0.18f + progress.coerceIn(0f, 1f) * 0.82f
 }

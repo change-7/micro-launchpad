@@ -68,6 +68,7 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.Pause
@@ -168,6 +169,7 @@ internal data class ControlAction(
     val actionValue: String = "",
     val targetAppBundleIdentifier: String = "",
     val launchTargetAppIfNeeded: Boolean = true,
+    val folderActions: List<ControlAction> = emptyList(),
     val iconBitmap: ImageBitmap? = null,
     val isPlaceholder: Boolean = false,
     val isIconless: Boolean = false
@@ -346,6 +348,7 @@ private fun GalaxyMicroLaunchpadApp(remoteBridge: RemoteBridgeClient) {
     val preferences = remember(context) { RemoteBridgePreferences(context) }
     var page by remember { mutableStateOf(AppPage.Controls) }
     var buttonPageIndex by rememberSaveable { mutableStateOf(0) }
+    var openFolderAction by remember { mutableStateOf<ControlAction?>(null) }
     var suppressCodexRevealUntilElapsedMillis by remember { mutableStateOf(0L) }
     var showConnectionSettings by rememberSaveable { mutableStateOf(false) }
     var idleBlackoutEnabled by rememberSaveable { mutableStateOf(preferences.idleBlackoutEnabled) }
@@ -533,8 +536,19 @@ private fun GalaxyMicroLaunchpadApp(remoteBridge: RemoteBridgeClient) {
                         AppPage.Controls -> ControlsPage(
                             pages = remoteBridge.smartphonePages,
                             pageIndex = buttonPageIndex,
-                            onPageChange = { buttonPageIndex = it },
+                            folderAction = openFolderAction,
+                            onPageChange = {
+                                openFolderAction = null
+                                buttonPageIndex = it
+                            },
                             onConnectionSettings = { showConnectionSettings = true },
+                            onOpenFolder = { action ->
+                                openFolderAction = action
+                                suppressCodexRevealUntilElapsedMillis =
+                                    SystemClock.elapsedRealtime() + ButtonActionRevealSuppressionMillis
+                                remoteBridge.sendSmartphoneButton(action.id)
+                            },
+                            onCloseFolder = { openFolderAction = null },
                             onAction = { action ->
                                 suppressCodexRevealUntilElapsedMillis =
                                     SystemClock.elapsedRealtime() + ButtonActionRevealSuppressionMillis
@@ -549,17 +563,6 @@ private fun GalaxyMicroLaunchpadApp(remoteBridge: RemoteBridgeClient) {
                     }
                 }
             }
-            BottomNavigation(
-                page = page,
-                onSelect = { targetPage ->
-                    if (targetPage != page) {
-                        val currentIndex = AppPage.entries.indexOf(page)
-                        val targetIndex = AppPage.entries.indexOf(targetPage)
-                        pageTransitionDirection = if (targetIndex > currentIndex) 1 else -1
-                        page = targetPage
-                    }
-                }
-            )
         }
         if (idleBlackoutEnabled && blackoutVisible) {
             Box(
@@ -573,12 +576,11 @@ private fun GalaxyMicroLaunchpadApp(remoteBridge: RemoteBridgeClient) {
                         }
                     }
             ) {
-                Box(
+                BlackoutStatusIndicator(
+                    isCodexWorking = shouldShowCodexWorkingStatus(remoteBridge.activeSessionCount),
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(end = 18.dp, bottom = 18.dp)
-                        .size(8.dp)
-                        .background(Green, CircleShape)
                 )
             }
         }
@@ -594,6 +596,35 @@ private fun GalaxyMicroLaunchpadApp(remoteBridge: RemoteBridgeClient) {
             )
         }
     }
+}
+
+@Composable
+private fun BlackoutStatusIndicator(
+    isCodexWorking: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val motion = rememberInfiniteTransition(label = "blackout-codex-indicator")
+    val pulseProgress by motion.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(650),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "blackout-codex-indicator-pulse"
+    )
+    Box(
+        modifier = modifier
+            .size(8.dp)
+            .background(
+                if (isCodexWorking) {
+                    Green.copy(alpha = blackoutIndicatorAlpha(isCodexWorking, pulseProgress))
+                } else {
+                    TextPrimary
+                },
+                CircleShape
+            )
+    )
 }
 
 @Composable
@@ -1049,15 +1080,18 @@ private fun UsageMeter(label: String, remainingPercent: Int?, accent: Color) {
 private fun ControlsPage(
     pages: List<ButtonPage>,
     pageIndex: Int,
+    folderAction: ControlAction?,
     onPageChange: (Int) -> Unit,
     onConnectionSettings: () -> Unit,
+    onOpenFolder: (ControlAction) -> Unit,
+    onCloseFolder: () -> Unit,
     onAction: (ControlAction) -> Unit
 ) {
     var verticalDrag by remember { mutableStateOf(0f) }
     Row(
         modifier = Modifier
             .fillMaxSize()
-            .padding(start = 20.dp, top = MainContentTopPadding, end = 20.dp, bottom = 4.dp)
+            .padding(start = 20.dp, top = MainContentTopPadding, end = 20.dp)
     ) {
         Column(
             modifier = Modifier
@@ -1087,53 +1121,134 @@ private fun ControlsPage(
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(pageIndex) {
-                    detectVerticalDragGestures(
-                        onVerticalDrag = { change, dragAmount ->
-                            change.consume()
-                            verticalDrag += dragAmount
-                        },
-                        onDragEnd = {
-                            val nextPage = when {
-                                verticalDrag < -80f -> (pageIndex + 1) % pages.size
-                                verticalDrag > 80f -> (pageIndex - 1 + pages.size) % pages.size
-                                else -> pageIndex
-                            }
-                            if (nextPage != pageIndex) onPageChange(nextPage)
-                            verticalDrag = 0f
-                        },
-                        onDragCancel = { verticalDrag = 0f }
-                    )
-                }
+                .then(
+                    if (folderAction == null) {
+                        Modifier.pointerInput(pageIndex) {
+                            detectVerticalDragGestures(
+                                onVerticalDrag = { change, dragAmount ->
+                                    change.consume()
+                                    verticalDrag += dragAmount
+                                },
+                                onDragEnd = {
+                                    val nextPage = when {
+                                        verticalDrag < -80f -> (pageIndex + 1) % pages.size
+                                        verticalDrag > 80f -> (pageIndex - 1 + pages.size) % pages.size
+                                        else -> pageIndex
+                                    }
+                                    if (nextPage != pageIndex) onPageChange(nextPage)
+                                    verticalDrag = 0f
+                                },
+                                onDragCancel = { verticalDrag = 0f }
+                            )
+                        }
+                    } else {
+                        Modifier
+                    }
+                )
         ) {
-            AnimatedContent(
-                targetState = pageIndex,
-                modifier = Modifier.fillMaxSize(),
-                transitionSpec = {
-                    val direction = pageTransitionDirection(initialState, targetState, pages.size)
-                    (slideInVertically(animationSpec = tween(260)) { height -> direction * (height / 5) } + fadeIn(tween(180))) togetherWith
-                        (slideOutVertically(animationSpec = tween(260)) { height -> -direction * (height / 5) } + fadeOut(tween(180)))
-                },
-                label = "button-page-transition"
-            ) { targetPageIndex ->
-                val targetPage = pages[targetPageIndex.coerceIn(pages.indices)]
-                val rowCount = (targetPage.actions.size + 3) / 4
-                val gap = 10.dp
-                val tileHeight = ((maxHeight - gap * (rowCount - 1)) / rowCount).coerceAtLeast(56.dp)
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(4),
+            if (folderAction != null) {
+                FolderContentsPage(
+                    folderAction = folderAction,
+                    maxHeight = maxHeight,
+                    onCloseFolder = onCloseFolder,
+                    onAction = onAction
+                )
+            } else {
+                AnimatedContent(
+                    targetState = pageIndex,
                     modifier = Modifier.fillMaxSize(),
-                    horizontalArrangement = Arrangement.spacedBy(gap),
-                    verticalArrangement = Arrangement.spacedBy(gap),
-                    userScrollEnabled = false
-                ) {
-                    items(targetPage.actions) { action ->
-                        ActionTile(action = action, tileHeight = tileHeight, onClick = { onAction(action) })
+                    transitionSpec = {
+                        val direction = pageTransitionDirection(initialState, targetState, pages.size)
+                        (slideInVertically(animationSpec = tween(260)) { height -> direction * (height / 5) } + fadeIn(tween(180))) togetherWith
+                            (slideOutVertically(animationSpec = tween(260)) { height -> -direction * (height / 5) } + fadeOut(tween(180)))
+                    },
+                    label = "button-page-transition"
+                ) { targetPageIndex ->
+                    val targetPage = pages[targetPageIndex.coerceIn(pages.indices)]
+                    val rowCount = (targetPage.actions.size + 3) / 4
+                    val gap = 10.dp
+                    val tileHeight = ((maxHeight - gap * (rowCount - 1)) / rowCount).coerceAtLeast(56.dp)
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(4),
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.spacedBy(gap),
+                        verticalArrangement = Arrangement.spacedBy(gap),
+                        userScrollEnabled = false
+                    ) {
+                        items(targetPage.actions) { action ->
+                            ActionTile(
+                                action = action,
+                                tileHeight = tileHeight,
+                                onClick = {
+                                    if (action.actionKind == "appFolder") onOpenFolder(action) else onAction(action)
+                                }
+                            )
+                        }
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun FolderContentsPage(
+    folderAction: ControlAction,
+    maxHeight: androidx.compose.ui.unit.Dp,
+    onCloseFolder: () -> Unit,
+    onAction: (ControlAction) -> Unit
+) {
+    val folderItems = folderGridItems(folderAction)
+    val visibleRowCount = FolderGridRowCount
+    val gap = 10.dp
+    val tileHeight = ((maxHeight - gap * (visibleRowCount - 1)) / visibleRowCount).coerceAtLeast(56.dp)
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(4),
+        modifier = Modifier.fillMaxSize(),
+        horizontalArrangement = Arrangement.spacedBy(gap),
+        verticalArrangement = Arrangement.spacedBy(gap),
+        userScrollEnabled = true
+    ) {
+        items(folderItems) { action ->
+            ActionTile(
+                action = action,
+                tileHeight = tileHeight,
+                onClick = { if (action.command == "closeFolder") onCloseFolder() else onAction(action) }
+            )
+        }
+    }
+}
+
+private const val FolderGridColumnCount = 4
+private const val FolderGridRowCount = 4
+private const val FolderGridMinimumItemCount = FolderGridColumnCount * FolderGridRowCount
+
+internal fun folderGridItems(folderAction: ControlAction): List<ControlAction> {
+    val items = buildList {
+        add(
+            ControlAction(
+                label = "상위 폴더",
+                icon = Icons.Outlined.KeyboardArrowUp,
+                command = "closeFolder",
+                accent = TextPrimary,
+                id = "${folderAction.id}_parent"
+            )
+        )
+        addAll(folderAction.folderActions)
+        while (size < FolderGridMinimumItemCount) {
+            add(
+                ControlAction(
+                    label = "",
+                    icon = Icons.Outlined.MoreHoriz,
+                    command = "folderPlaceholder",
+                    id = "${folderAction.id}_empty_$size",
+                    isPlaceholder = true,
+                    isIconless = true
+                )
+            )
+        }
+    }
+    return items
 }
 
 private fun pageTransitionDirection(initialPage: Int, targetPage: Int, pageCount: Int): Int {
@@ -1201,6 +1316,13 @@ private fun ActionTile(action: ControlAction, tileHeight: androidx.compose.ui.un
 
 @Composable
 private fun CodexStatusPage(remoteBridge: RemoteBridgeClient) {
+    var nowEpochSeconds by remember { mutableStateOf(System.currentTimeMillis() / 1_000L) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            nowEpochSeconds = System.currentTimeMillis() / 1_000L
+            delay(30_000L)
+        }
+    }
     // Keep rendering defensive for older bridge payloads or a state replay
     // received while reconnecting. The client normally normalizes this value,
     // but the UI must never fall back to the idle branch for an active alias.
@@ -1239,45 +1361,59 @@ private fun CodexStatusPage(remoteBridge: RemoteBridgeClient) {
                     fontSize = 18.sp
                 )
             }
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.weight(0.55f))
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Remaining usage", color = TextMuted, fontSize = 13.sp)
+                Text("Remaining usage", color = TextMuted, fontSize = 15.sp)
                 Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("5-hour", color = TextMuted, fontSize = 12.sp)
+                        Text("5-hour", color = TextMuted, fontSize = 13.sp)
                         Text(
                             fiveHourRemaining?.let { "$it%" } ?: "—",
                             color = usageGaugeColor(fiveHourRemaining),
-                            fontSize = 32.sp
+                            fontSize = 36.sp
                         )
                         Text(
                             formatResetTime(remoteBridge.fiveHourResetsAt, includeDate = false),
                             color = TextPrimary,
+                            fontSize = 16.sp,
+                            lineHeight = 20.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1
+                        )
+                        Text(
+                            formatRemainingDuration(remoteBridge.fiveHourResetsAt, nowEpochSeconds),
+                            color = TextMuted,
                             fontSize = 14.sp,
                             lineHeight = 18.sp,
-                            fontWeight = FontWeight.Medium,
                             maxLines = 1
                         )
                     }
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("1-week", color = TextMuted, fontSize = 12.sp)
+                        Text("1-week", color = TextMuted, fontSize = 13.sp)
                         Text(
                             weeklyRemaining?.let { "$it%" } ?: "—",
                             color = usageGaugeColor(weeklyRemaining),
-                            fontSize = 32.sp
+                            fontSize = 36.sp
                         )
                         Text(
                             formatResetTime(remoteBridge.resetsAt, includeDate = true),
                             color = TextPrimary,
+                            fontSize = 16.sp,
+                            lineHeight = 20.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1
+                        )
+                        Text(
+                            formatRemainingDuration(remoteBridge.resetsAt, nowEpochSeconds),
+                            color = TextMuted,
                             fontSize = 14.sp,
                             lineHeight = 18.sp,
-                            fontWeight = FontWeight.Medium,
                             maxLines = 1
                         )
                     }
                 }
             }
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.weight(0.45f))
         }
         Box(
             modifier = Modifier.weight(1f).fillMaxHeight().padding(horizontal = 28.dp)
@@ -1505,6 +1641,32 @@ private fun formatResetTime(epochSeconds: Double?, includeDate: Boolean): String
     }.getOrDefault("—")
 }
 
+internal fun formatRemainingDuration(resetEpochSeconds: Double?, nowEpochSeconds: Long): String {
+    val resetSeconds = resetEpochSeconds?.takeIf { it.isFinite() }?.toLong() ?: return "—"
+    val remainingSeconds = resetSeconds - nowEpochSeconds
+    if (remainingSeconds <= 0L) return "곧 갱신"
+
+    val totalMinutes = (remainingSeconds + 59L) / 60L
+    val minutesPerDay = 24L * 60L
+    val days = totalMinutes / minutesPerDay
+    val remainingMinutes = totalMinutes % minutesPerDay
+    val hours = remainingMinutes / 60L
+    val minutes = remainingMinutes % 60L
+
+    if (days > 0L) {
+        return when {
+            hours > 0L -> "${days}일+${hours}시간"
+            minutes > 0L -> "${days}일+${minutes}분"
+            else -> "${days}일"
+        }
+    }
+    return when {
+        hours > 0L && minutes > 0L -> "${hours}시간 ${minutes}분"
+        hours > 0L -> "${hours}시간"
+        else -> "${minutes.coerceAtLeast(1L)}분"
+    }
+}
+
 private fun usageGaugeColor(remaining: Int?): Color {
     val value = remaining?.coerceIn(0, 100) ?: return TextMuted
     return when {
@@ -1521,30 +1683,6 @@ private fun StatusLine(label: String, color: Color) {
         Box(Modifier.size(5.dp).background(color, RoundedCornerShape(50)))
         Spacer(Modifier.width(7.dp))
         Text(label, color = color.copy(alpha = 0.8f), fontSize = 11.sp)
-    }
-}
-
-@Composable
-private fun BottomNavigation(page: AppPage, onSelect: (AppPage) -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(38.dp)
-            .padding(horizontal = 20.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        AppPage.entries.forEach { item ->
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(34.dp)
-                    .clickable { onSelect(item) },
-                contentAlignment = Alignment.Center
-            ) {
-                Text(item.label, color = if (item == page) TextPrimary else TextMuted, fontSize = 14.sp)
-            }
-        }
     }
 }
 
