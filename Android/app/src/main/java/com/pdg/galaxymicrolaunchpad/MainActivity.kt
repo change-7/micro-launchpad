@@ -240,6 +240,7 @@ class MainActivity : ComponentActivity() {
         remoteBridge = RemoteBridgeRuntime.client(this)
         remoteBridge.onCodexCompletion = ::wakeForCodexCompletion
         remoteBridge.onCodexRunning = ::wakeForCodexRunning
+        remoteBridge.onCodexApproval = ::wakeForCodexApproval
         ContextCompat.startForegroundService(
             this,
             Intent(this, RemoteBridgeService::class.java).setAction(RemoteBridgeService.ACTION_START)
@@ -266,6 +267,7 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         remoteBridge.onCodexCompletion = null
         remoteBridge.onCodexRunning = null
+        remoteBridge.onCodexApproval = null
         releaseCompletionWakeLock()
         stopCompletionNotificationSound()
         super.onDestroy()
@@ -279,6 +281,11 @@ class MainActivity : ComponentActivity() {
 
     @Suppress("DEPRECATION")
     private fun wakeForCodexRunning() {
+        wakeScreenForCodex()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun wakeForCodexApproval() {
         wakeScreenForCodex()
     }
 
@@ -593,6 +600,12 @@ private fun GalaxyMicroLaunchpadApp(remoteBridge: RemoteBridgeClient) {
                 onDisplayKeepAwakeMinutesChanged = { displayKeepAwakeMinutes = it },
                 onCompletionBlinkDurationSecondsChanged = { completionBlinkDurationSeconds = it },
                 onDismiss = { showConnectionSettings = false }
+            )
+        }
+        remoteBridge.pendingApproval?.let { approval ->
+            ApprovalRequestDialog(
+                approval = approval,
+                onDecision = remoteBridge::sendCodexApproval
             )
         }
     }
@@ -1518,6 +1531,50 @@ private fun ApprovalPrompt(
             }
         }
     }
+}
+
+@Composable
+private fun ApprovalRequestDialog(
+    approval: RemoteApproval,
+    onDecision: (String) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = {},
+        containerColor = Tile,
+        titleContentColor = TextPrimary,
+        textContentColor = TextPrimary,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                StatusMotion(activity = "waitingForApproval", color = GaugeMid)
+                Spacer(Modifier.width(12.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("Codex 승인 대기", color = GaugeMid, fontSize = 20.sp, fontWeight = FontWeight.Medium)
+                    Text("확인이 필요한 작업입니다", color = TextMuted, fontSize = 13.sp)
+                }
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(approval.title, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                Text(
+                    approval.detail,
+                    color = TextPrimary,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onDecision("accept") }) {
+                Text("승인", color = GaugeHigh, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { onDecision("decline") }) {
+                Text("거절", color = Red, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            }
+        }
+    )
 }
 
 @Composable

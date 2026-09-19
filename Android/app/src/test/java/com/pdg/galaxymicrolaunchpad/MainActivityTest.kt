@@ -200,6 +200,15 @@ class MainActivityTest {
     }
 
     @Test
+    fun approvalWake_triggersOnlyWhenARequestArrives() {
+        val approval = RemoteApproval("파일 변경 승인", "이 변경을 적용할까요?")
+
+        assertTrue(shouldWakeForCodexApproval(previousApproval = null, currentApproval = approval))
+        assertFalse(shouldWakeForCodexApproval(previousApproval = approval, currentApproval = approval))
+        assertFalse(shouldWakeForCodexApproval(previousApproval = approval, currentApproval = null))
+    }
+
+    @Test
     fun desktopCompletionEvent_revealsCodexEvenWhileAggregateActivityIsRunning() {
         assertTrue(
             shouldRevealCodex(

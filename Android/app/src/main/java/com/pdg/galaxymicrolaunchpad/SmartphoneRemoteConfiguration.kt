@@ -190,6 +190,13 @@ internal fun shouldShowCodexWorkingStatus(activeSessionCount: Int): Boolean {
     return activeSessionCount > 0
 }
 
+internal fun shouldWakeForCodexApproval(
+    previousApproval: RemoteApproval?,
+    currentApproval: RemoteApproval?
+): Boolean {
+    return currentApproval != null && previousApproval == null
+}
+
 internal fun shouldRevealCodex(
     previousActivity: String?,
     currentActivity: String,

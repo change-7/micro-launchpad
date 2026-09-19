@@ -98,6 +98,7 @@ class RemoteBridgeClient(context: Context) {
     @Volatile private var hasReceivedRemoteState = false
     /** Set when a reconnect may replay the same active state without a transition. */
     @Volatile private var forceCodexRevealAfterReconnect = false
+    @Volatile private var lastApproval: RemoteApproval? = null
     // Usage values are optional on the wire. Keep a transport-level cache so
     // an activity-only update cannot blank values that were already received.
     @Volatile private var cachedUsedPercent: Int? = null
@@ -113,6 +114,8 @@ class RemoteBridgeClient(context: Context) {
     var onCodexCompletion: (() -> Unit)? = null
     /** Called on the main thread when Codex enters running state. */
     var onCodexRunning: (() -> Unit)? = null
+    /** Called on the main thread when a new approval request is received. */
+    var onCodexApproval: (() -> Unit)? = null
 
     var codexRevealEventId by mutableStateOf(0)
     internal var codexRevealReason by mutableStateOf(CodexRevealReason.Running)
@@ -232,6 +235,7 @@ class RemoteBridgeClient(context: Context) {
                     // Make the first replayed active state reveal Codex again.
                     forceCodexRevealAfterReconnect = true
                 }
+                lastApproval = null
                 // Keep an active Codex state across a transient bridge
                 // reconnect. Clearing it here makes the phone stop its
                 // running motion during a short read timeout, even though
@@ -305,6 +309,8 @@ class RemoteBridgeClient(context: Context) {
             lastStateObject = state
             val nextSmartphonePages = parseSmartphonePages(state, iconBitmapCache, smartphoneIconAssets)
             val nextApproval = parseRemoteApproval(state)
+            val approvalEvent = shouldWakeForCodexApproval(lastApproval, nextApproval)
+            lastApproval = nextApproval
             val nextCompletionEventId = state.optInt("completionEventID", 0)
             val nextActiveSessionCount = state.optInt("activeSessionCount", 0).coerceAtLeast(0)
             val reconnectReveal = shouldRevealCodexAfterReconnect(
@@ -366,6 +372,9 @@ class RemoteBridgeClient(context: Context) {
                 if (runningTransition) {
                     onCodexRunning?.invoke()
                 }
+                if (approvalEvent) {
+                    onCodexApproval?.invoke()
+                }
                 if (completionEvent) {
                     onCodexCompletion?.invoke()
                 }
@@ -424,6 +433,7 @@ class RemoteBridgeClient(context: Context) {
     private fun clearRemoteState(nextMessage: String = "Mac을 찾는 중…") {
         lastActivity = null
         lastCompletionEventId = null
+        lastApproval = null
         cachedUsedPercent = null
         cachedRemainingPercent = null
         cachedFiveHourRemainingPercent = null
